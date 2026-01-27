@@ -9,6 +9,35 @@ import os
 from typing import List, Optional, Callable, Dict, Any
 
 
+def get_ffmpeg_path() -> str:
+    """Get the path to ffmpeg executable, checking local directory first."""
+    # Check if running as PyInstaller bundle
+    if getattr(sys, 'frozen', False):
+        # Running as compiled exe
+        app_dir = os.path.dirname(sys.executable)
+    else:
+        # Running as script - check project root
+        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    local_ffmpeg = os.path.join(app_dir, "ffmpeg.exe")
+    if os.path.exists(local_ffmpeg):
+        return local_ffmpeg
+    return "ffmpeg"  # Fall back to PATH
+
+
+def get_ffprobe_path() -> str:
+    """Get the path to ffprobe executable, checking local directory first."""
+    if getattr(sys, 'frozen', False):
+        app_dir = os.path.dirname(sys.executable)
+    else:
+        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    local_ffprobe = os.path.join(app_dir, "ffprobe.exe")
+    if os.path.exists(local_ffprobe):
+        return local_ffprobe
+    return "ffprobe"  # Fall back to PATH
+
+
 def get_video_duration(video_path: str) -> float:
     """
     Get the duration of a video file in seconds.
@@ -25,7 +54,7 @@ def get_video_duration(video_path: str) -> float:
     try:
         # Build ffprobe command
         cmd = [
-            "ffprobe",
+            get_ffprobe_path(),
             "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
@@ -121,8 +150,9 @@ def generate_gifs(
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
             # Single-pass approach with palette generation for good quality
+            ffmpeg_path = get_ffmpeg_path()
             simple_cmd = [
-                "ffmpeg",
+                ffmpeg_path,
                 "-y",
                 "-ss", str(start_time),
                 "-t", str(actual_duration),
@@ -141,7 +171,7 @@ def generate_gifs(
             if result.returncode != 0:
                 # Try simpler approach if complex filter fails
                 fallback_cmd = [
-                    "ffmpeg",
+                    ffmpeg_path,
                     "-y",
                     "-ss", str(start_time),
                     "-t", str(actual_duration),

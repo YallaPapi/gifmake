@@ -1,0 +1,36 @@
+# Build artifacts
+build/
+dist/
+*.spec
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Test outputs
+test_gif_*.gif
+*.mp4
+
+# Sensitive files
+.env
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Batch outputs
+batch/output/
+
+# Examples (user-generated)
+examples/

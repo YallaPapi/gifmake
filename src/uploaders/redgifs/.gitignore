@@ -1,0 +1,75 @@
+# Файл окружения с токенами
+.env
+.env.local
+.env.*.local
+
+# НЕ игнорируем пример конфигурации
+!.env.example
+
+# Видео файлы
+*.mp4
+*.mov
+*.avi
+*.wmv
+*.mpg
+*.mpeg
+*.m4v
+*.webm
+*.ogv
+*.ogm
+*.MP4
+*.MOV
+*.AVI
+
+NUL
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Виртуальное окружение
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Логи
+*.log
+logs/
+
+# Результаты загрузок
+results_*.txt
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Временные файлы
+*.tmp
+*.bak
