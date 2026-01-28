@@ -1,0 +1,14 @@
+{
+  "adspower_api_base": "http://127.0.0.1:50325",
+  "api_key": "your_adspower_api_key_here",
+  "profiles": [
+    {
+      "profile_id": "k17q5m3h",
+      "account_name": "account1"
+    },
+    {
+      "profile_id": "k199f724",
+      "account_name": "account2"
+    }
+  ]
+}

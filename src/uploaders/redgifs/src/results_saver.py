@@ -9,7 +9,7 @@ class ResultsSaver:
     """Класс для сохранения результатов загрузки"""
 
     @staticmethod
-    def save_results(results: List[Tuple], output_dir: Path = None) -> str:
+    def save_results(results: List[Tuple], output_dir: Path = None, prefix: str = "") -> str:
         """
         Сохранение результатов в TXT файл (формат для парсинга)
 
@@ -23,6 +23,7 @@ class ResultsSaver:
         Args:
             results: Список результатов загрузки
             output_dir: Директория для сохранения
+            prefix: Префикс для имени файла (например account_name_)
 
         Returns:
             Путь к созданному файлу
@@ -32,7 +33,7 @@ class ResultsSaver:
 
         # Генерация имени файла с датой и временем
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"results_{timestamp}.txt"
+        filename = f"{prefix}results_{timestamp}.txt"
         filepath = output_dir / filename
 
         lines = []

@@ -1,2 +1,3 @@
 aiohttp==3.9.1
 colorlog==6.8.0
+requests>=2.31.0

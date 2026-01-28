@@ -1,0 +1,34 @@
+{
+  "accounts": [
+    {
+      "name": "account1",
+      "enabled": true,
+      "token": "your_bearer_token_here",
+      "proxy": "",
+      "proxy_rotation_url": "",
+      "video_folder": "videos",
+      "tags": ["Amateur", "Ass", "Big Tits"],
+      "description": "",
+      "content_type": "Solo Female",
+      "sexuality": "straight",
+      "niches": [],
+      "threads": 3,
+      "keep_audio": false
+    },
+    {
+      "name": "account2",
+      "enabled": false,
+      "token": "another_bearer_token_here",
+      "proxy": "ip:port:user:password",
+      "proxy_rotation_url": "https://your-mobile-proxy.com/rotate?key=xxx",
+      "video_folder": "videos2",
+      "tags": ["Blowjob", "Cumshot"],
+      "description": "Hot content",
+      "content_type": "Couple",
+      "sexuality": "straight",
+      "niches": ["OnlyFans"],
+      "threads": 2,
+      "keep_audio": true
+    }
+  ]
+}

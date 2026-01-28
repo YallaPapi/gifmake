@@ -4,10 +4,12 @@ Async video uploader for RedGifs with concurrent processing and rate limit handl
 
 ## Features
 
+- **Automatic token refresh** from AdsPower browser profiles
+- **Multi-account support** with per-account configuration
 - Async multi-threaded uploads
 - Automatic rate limit detection
 - Duplicate detection (MD5)
-- Proxy support
+- Mobile proxy support with automatic IP rotation
 - Colorized logging with thread-specific colors
 - Upload results export to TXT
 - Cleanup utility for uploaded videos
@@ -78,10 +80,25 @@ PROXY=IP:PORT:USER:PASS
 
 ### Getting RedGifs Token
 
+#### Automatic Token Refresh (Recommended)
+
+If you use AdsPower for browser profiles, tokens are automatically refreshed before each upload run:
+
+1. Configure `adspower_config.json` with your AdsPower API credentials and profile IDs
+2. Run `python main.py` - tokens will be auto-refreshed from your logged-in browser profiles
+
+See [TOKEN_REFRESH.md](TOKEN_REFRESH.md) for detailed setup instructions.
+
+#### Manual Token Extraction
+
 1. Open https://www.redgifs.com/ and login
 2. Open browser DevTools (F12) → Network tab
-3. Make any API request on the site
-4. Copy the `Authorization: Bearer` token from request headers
+3. Filter for `api.redgifs.com`
+4. Look for requests to `/v1/me` or similar user endpoints
+5. Copy the `Authorization: Bearer` token from request headers
+6. Update `accounts.json` with the token
+
+**Note**: Tokens expire after ~1 hour, so manual extraction requires frequent updates.
 
 ## Project Structure
 

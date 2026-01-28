@@ -3,8 +3,17 @@
 .env.local
 .env.*.local
 
-# НЕ игнорируем пример конфигурации
+# Accounts config (contains tokens)
+accounts.json
+adspower_config.json
+
+# ChromeDriver cache
+chromedriver_cache/
+
+# НЕ игнорируем примеры конфигурации
 !.env.example
+!accounts.json.example
+!adspower_config.json.example
 
 # Видео файлы
 *.mp4

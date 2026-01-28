@@ -2,11 +2,12 @@
 
 import asyncio
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 
 import aiohttp
 
 from .config import Config
+from .account_manager import Account
 from .logger import get_logger
 
 logger = get_logger()
@@ -15,7 +16,7 @@ logger = get_logger()
 class RedGifsAPIClient:
     """Клиент для асинхронной работы с API RedGifs"""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Union[Config, Account]):
         self.config = config
         self.timeout_short = aiohttp.ClientTimeout(total=10)
         self.timeout_long = aiohttp.ClientTimeout(total=600)  # 10 минут для больших файлов

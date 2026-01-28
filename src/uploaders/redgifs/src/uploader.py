@@ -203,8 +203,8 @@ class VideoUploader:
         index: int
     ) -> None:
         """Ожидание encoding"""
-        logger.info(f"[Thread {index}] [4/5] Pause 30 sec...")
-        await asyncio.sleep(30)
+        logger.info(f"[Thread {index}] [4/5] Pause 2 sec...")
+        await asyncio.sleep(2)
 
         try:
             enc_data = await self.api_client.api_get(session, f"/v1/gifs/fetch/status/{gif_id}")
@@ -213,8 +213,8 @@ class VideoUploader:
         except Exception as e:
             logger.warning(f"[Thread {index}] [4/5] Failed to check status: {e}")
 
-        logger.info(f"[Thread {index}] [4/5] Pause 30 sec...")
-        await asyncio.sleep(30)
+        logger.info(f"[Thread {index}] [4/5] Pause 1 sec...")
+        await asyncio.sleep(1)
 
     async def _publish_video(
         self,
