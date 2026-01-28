@@ -88,7 +88,8 @@ def generate_gifs(
     gif_duration: int = 4,
     fps: int = 15,
     resolution: Optional[int] = 480,
-    progress_callback: Optional[Callable[[int, int], None]] = None
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    output_format: str = "gif"
 ) -> List[str]:
     """
     Generate multiple GIFs from a video file.
@@ -100,9 +101,10 @@ def generate_gifs(
         fps: Frame rate for the GIFs (default: 15)
         resolution: Height in pixels (None for original, default: 480)
         progress_callback: Optional callback function(current, total) for progress updates
+        output_format: Output format - "gif" or "mp4" (default: "gif")
 
     Returns:
-        List of paths to generated GIF files
+        List of paths to generated GIF or MP4 files
 
     Raises:
         RuntimeError: If video processing fails
@@ -142,45 +144,36 @@ def generate_gifs(
         if actual_duration <= 0:
             break
 
-        # Output filename
-        output_filename = f"{video_filename}_gif_{i + 1:03d}.gif"
+        # Output filename based on format
+        if output_format == "mp4":
+            output_filename = f"{video_filename}_clip_{i + 1:03d}.mp4"
+        else:
+            output_filename = f"{video_filename}_gif_{i + 1:03d}.gif"
         output_path = os.path.join(output_folder, output_filename)
 
         try:
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-
-            # Single-pass approach with palette generation for good quality
             ffmpeg_path = get_ffmpeg_path()
-            simple_cmd = [
-                ffmpeg_path,
-                "-y",
-                "-ss", str(start_time),
-                "-t", str(actual_duration),
-                "-i", video_path,
-                "-vf", f"fps={fps},{scale_filter},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5",
-                output_path
-            ]
 
-            result = subprocess.run(
-                simple_cmd,
-                capture_output=True,
-                text=True,
-                creationflags=creationflags
-            )
-
-            if result.returncode != 0:
-                # Try simpler approach if complex filter fails
-                fallback_cmd = [
+            if output_format == "mp4":
+                # MP4 video clip encoding with libx264
+                cmd = [
                     ffmpeg_path,
                     "-y",
                     "-ss", str(start_time),
                     "-t", str(actual_duration),
                     "-i", video_path,
                     "-vf", f"fps={fps},{scale_filter}",
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "23",
+                    "-c:a", "aac",
+                    "-b:a", "128k",
                     output_path
                 ]
+
                 result = subprocess.run(
-                    fallback_cmd,
+                    cmd,
                     capture_output=True,
                     text=True,
                     creationflags=creationflags
@@ -188,6 +181,45 @@ def generate_gifs(
 
                 if result.returncode != 0:
                     raise RuntimeError(f"FFmpeg error: {result.stderr}")
+            else:
+                # GIF encoding: Single-pass approach with palette generation for good quality
+                simple_cmd = [
+                    ffmpeg_path,
+                    "-y",
+                    "-ss", str(start_time),
+                    "-t", str(actual_duration),
+                    "-i", video_path,
+                    "-vf", f"fps={fps},{scale_filter},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5",
+                    output_path
+                ]
+
+                result = subprocess.run(
+                    simple_cmd,
+                    capture_output=True,
+                    text=True,
+                    creationflags=creationflags
+                )
+
+                if result.returncode != 0:
+                    # Try simpler approach if complex filter fails
+                    fallback_cmd = [
+                        ffmpeg_path,
+                        "-y",
+                        "-ss", str(start_time),
+                        "-t", str(actual_duration),
+                        "-i", video_path,
+                        "-vf", f"fps={fps},{scale_filter}",
+                        output_path
+                    ]
+                    result = subprocess.run(
+                        fallback_cmd,
+                        capture_output=True,
+                        text=True,
+                        creationflags=creationflags
+                    )
+
+                    if result.returncode != 0:
+                        raise RuntimeError(f"FFmpeg error: {result.stderr}")
 
             gif_paths.append(output_path)
 
@@ -283,22 +315,24 @@ def generate_gifs_bulk(
     fps: int = 15,
     resolution: Optional[int] = 480,
     progress_callback: Optional[Callable[[int, int], None]] = None,
-    video_callback: Optional[Callable[[int, int, str], None]] = None
+    video_callback: Optional[Callable[[int, int, str], None]] = None,
+    output_format: str = "gif"
 ) -> Dict[str, Any]:
     """
-    Generate GIFs from multiple video files.
+    Generate GIFs or video clips from multiple video files.
 
     For each video, creates a subfolder named after the video file
-    and generates GIFs into that subfolder.
+    and generates GIFs or clips into that subfolder.
 
     Args:
         video_paths: List of video file paths to process
         output_folder: Base output directory
-        gif_duration: Duration of each GIF in seconds (default: 4)
-        fps: Frame rate for the GIFs (default: 15)
+        gif_duration: Duration of each GIF/clip in seconds (default: 4)
+        fps: Frame rate for the output (default: 15)
         resolution: Height in pixels (None for original, default: 480)
-        progress_callback: Called for each GIF completed within current video: callback(gif_num, total_gifs)
+        progress_callback: Called for each output completed within current video: callback(num, total)
         video_callback: Called when starting each video: callback(video_num, total_videos, video_filename)
+        output_format: Output format - "gif" or "mp4" (default: "gif")
 
     Returns:
         Dict with keys:
@@ -331,14 +365,15 @@ def generate_gifs_bulk(
             video_output_folder = os.path.join(output_folder, video_name_no_ext)
             os.makedirs(video_output_folder, exist_ok=True)
 
-            # Generate GIFs for this video
+            # Generate GIFs or clips for this video
             gif_paths = generate_gifs(
                 video_path=video_path,
                 output_folder=video_output_folder,
                 gif_duration=gif_duration,
                 fps=fps,
                 resolution=resolution,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                output_format=output_format
             )
 
             results["success"].append({

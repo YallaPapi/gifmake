@@ -9,9 +9,18 @@ import threading
 import os
 import subprocess
 import sys
+import asyncio
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Add uploaders directory to path for import
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploaders'))
+try:
+    from upload_bridge import UploadBridge
+    UPLOAD_AVAILABLE = True
+except ImportError:
+    UPLOAD_AVAILABLE = False
 
 
 class GifMakeApp(ctk.CTk):
@@ -59,6 +68,12 @@ class GifMakeApp(ctk.CTk):
         self.total_duration = 0  # Total duration for bulk mode
         self.is_processing = False
         self.bulk_mode = False  # False = Single Video, True = Bulk Folder
+
+        # Upload state variables
+        self.upload_enabled = False
+        self.selected_account = None
+        self.account_manager = None
+        self.upload_settings = {}
 
         # Build the UI
         self._create_widgets()
@@ -398,6 +413,102 @@ class GifMakeApp(ctk.CTk):
         )
         self.resolution_dropdown.set("480p")  # Default 480p
         self.resolution_dropdown.grid(row=row, column=1, sticky="w", padx=padding_x, pady=padding_y)
+
+        row += 1
+
+        # ----- Output Format -----
+        self.output_format_label = ctk.CTkLabel(
+            self.settings_frame,
+            text="Output Format:",
+            font=ctk.CTkFont(size=13),
+            anchor="w"
+        )
+        self.output_format_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=padding_y)
+
+        self.format_segmented = ctk.CTkSegmentedButton(
+            self.settings_frame,
+            values=["GIF", "Video Clips"],
+            command=self.on_format_change,
+            font=ctk.CTkFont(size=12),
+            selected_color=("#1E88E5", "#1565C0"),
+            selected_hover_color=("#1976D2", "#0D47A1")
+        )
+        self.format_segmented.set("GIF")
+        self.format_segmented.grid(row=row, column=1, sticky="w", padx=padding_x, pady=padding_y)
+
+        row += 1
+
+        # ----- Upload to RedGIFs -----
+        self.upload_checkbox = ctk.CTkCheckBox(
+            self.settings_frame,
+            text="Upload to RedGIFs after generation",
+            font=ctk.CTkFont(size=13),
+            command=self.on_upload_toggle
+        )
+        self.upload_checkbox.grid(row=row, column=0, columnspan=2, sticky="w", padx=padding_x, pady=padding_y)
+
+        if not UPLOAD_AVAILABLE:
+            self.upload_checkbox.configure(state="disabled")
+
+        row += 1
+
+        # Upload settings frame (expandable)
+        self.upload_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=("#E8E8E8", "#2A2A3E"))
+        self.upload_settings_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=padding_x, pady=(0, padding_y))
+        self.upload_settings_frame.grid_columnconfigure(1, weight=1)
+        self.upload_settings_frame.grid_remove()  # Hidden by default
+
+        # Account dropdown
+        upload_row = 0
+        self.account_label = ctk.CTkLabel(self.upload_settings_frame, text="Account:", font=ctk.CTkFont(size=12))
+        self.account_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=(10, 5))
+
+        self.account_dropdown = ctk.CTkComboBox(
+            self.upload_settings_frame,
+            values=["Loading..."],
+            width=150,
+            state="readonly",
+            command=self.on_account_change
+        )
+        self.account_dropdown.grid(row=upload_row, column=1, sticky="w", padx=10, pady=(10, 5))
+
+        upload_row += 1
+
+        # Tags
+        self.tags_label = ctk.CTkLabel(self.upload_settings_frame, text="Tags:", font=ctk.CTkFont(size=12))
+        self.tags_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=5)
+
+        self.tags_entry = ctk.CTkEntry(self.upload_settings_frame, placeholder_text="Comma-separated tags")
+        self.tags_entry.grid(row=upload_row, column=1, sticky="ew", padx=10, pady=5)
+
+        upload_row += 1
+
+        # Description
+        self.desc_label = ctk.CTkLabel(self.upload_settings_frame, text="Description:", font=ctk.CTkFont(size=12))
+        self.desc_label.grid(row=upload_row, column=0, sticky="nw", padx=10, pady=5)
+
+        self.desc_textbox = ctk.CTkTextbox(self.upload_settings_frame, height=60)
+        self.desc_textbox.grid(row=upload_row, column=1, sticky="ew", padx=10, pady=5)
+
+        upload_row += 1
+
+        # Content Type
+        self.content_label = ctk.CTkLabel(self.upload_settings_frame, text="Content Type:", font=ctk.CTkFont(size=12))
+        self.content_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=5)
+
+        self.content_dropdown = ctk.CTkComboBox(
+            self.upload_settings_frame,
+            values=["Solo Female", "Solo Male", "Couple", "Group"],
+            width=150,
+            state="readonly"
+        )
+        self.content_dropdown.grid(row=upload_row, column=1, sticky="w", padx=10, pady=5)
+
+        upload_row += 1
+
+        # Keep Audio
+        self.audio_checkbox = ctk.CTkCheckBox(self.upload_settings_frame, text="Keep Audio")
+        self.audio_checkbox.grid(row=upload_row, column=0, columnspan=2, sticky="w", padx=10, pady=(5, 10))
 
         row += 1
 
@@ -839,6 +950,69 @@ class GifMakeApp(ctk.CTk):
         self.duration_value_label.configure(text=f"{duration} seconds")
         self._update_duration_display()
 
+    def on_format_change(self, value):
+        """Handle output format change between GIF and Video Clips."""
+        if value == "Video Clips":
+            self.generate_btn.configure(text="Generate Clips")
+            self.duration_setting_label.configure(text="Clip Duration:")
+        else:
+            self.generate_btn.configure(text="Generate GIFs")
+            self.duration_setting_label.configure(text="GIF Duration:")
+
+    def on_upload_toggle(self):
+        """Handle upload checkbox toggle."""
+        self.upload_enabled = self.upload_checkbox.get()
+        if self.upload_enabled:
+            self.upload_settings_frame.grid()
+            self._load_accounts()
+        else:
+            self.upload_settings_frame.grid_remove()
+
+    def _load_accounts(self):
+        """Load accounts from the account manager."""
+        if not UPLOAD_AVAILABLE:
+            return
+        try:
+            # Add redgifs directory to path for imports
+            import sys
+            from pathlib import Path
+            redgifs_path = str(Path(__file__).parent.parent / "uploaders" / "redgifs")
+            if redgifs_path not in sys.path:
+                sys.path.insert(0, redgifs_path)
+            from redgifs_core.account_manager import AccountManager
+            accounts_file = Path(__file__).parent.parent / "uploaders" / "redgifs" / "accounts.json"
+            self.account_manager = AccountManager(accounts_file)
+            accounts = self.account_manager.get_enabled_accounts()
+            if accounts:
+                names = [acc.name for acc in accounts]
+                self.account_dropdown.configure(values=names)
+                self.account_dropdown.set(names[0])
+                self.on_account_change(names[0])
+            else:
+                self.account_dropdown.configure(values=["No accounts found"])
+                self.account_dropdown.set("No accounts found")
+        except Exception as e:
+            print(f"Failed to load accounts: {e}")
+            self.account_dropdown.configure(values=["Error loading accounts"])
+            self.account_dropdown.set("Error loading accounts")
+
+    def on_account_change(self, account_name):
+        """Handle account dropdown change."""
+        if not self.account_manager:
+            return
+        account = self.account_manager.get_account_by_name(account_name)
+        if account:
+            self.tags_entry.delete(0, "end")
+            self.tags_entry.insert(0, ", ".join(account.tags))
+            self.desc_textbox.delete("1.0", "end")
+            self.desc_textbox.insert("1.0", account.description)
+            self.content_dropdown.set(account.content_type)
+            if account.keep_audio:
+                self.audio_checkbox.select()
+            else:
+                self.audio_checkbox.deselect()
+            self.selected_account = account
+
     def generate_gifs(self):
         """Start the GIF generation process."""
 
@@ -885,45 +1059,47 @@ class GifMakeApp(ctk.CTk):
         fps = int(self.fps_dropdown.get())
         resolution_key = self.resolution_dropdown.get()
         resolution = self.RESOLUTION_OPTIONS.get(resolution_key)
+        output_format = "mp4" if self.format_segmented.get() == "Video Clips" else "gif"
 
         # Start worker thread
         if self.bulk_mode:
             self.bulk_progress_label.grid()  # Show bulk progress label
             thread = threading.Thread(
                 target=self._generate_bulk_worker,
-                args=(self.video_paths.copy(), output_folder, gif_duration, fps, resolution),
+                args=(self.video_paths.copy(), output_folder, gif_duration, fps, resolution, output_format),
                 daemon=True
             )
         else:
             self.bulk_progress_label.grid_remove()  # Hide bulk progress label
             thread = threading.Thread(
                 target=self._generate_worker,
-                args=(self.video_path, output_folder, gif_duration, fps, resolution),
+                args=(self.video_path, output_folder, gif_duration, fps, resolution, output_format),
                 daemon=True
             )
         thread.start()
 
-    def _generate_worker(self, video_path, output_folder, gif_duration, fps, resolution):
+    def _generate_worker(self, video_path, output_folder, gif_duration, fps, resolution, output_format):
         """Worker function that runs in a separate thread (single video mode)."""
         try:
             from core.gif_generator import generate_gifs
 
             # Define progress callback
             def progress_callback(current, total):
-                self.after(0, lambda: self._update_progress(current, total))
+                self.after(0, lambda: self._update_progress(current, total, output_format))
 
-            # Generate GIFs
+            # Generate GIFs or clips
             gif_paths = generate_gifs(
                 video_path=video_path,
                 output_folder=output_folder,
                 gif_duration=gif_duration,
                 fps=fps,
                 resolution=resolution,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                output_format=output_format
             )
 
             # Signal completion on main thread
-            self.after(0, lambda: self._on_complete(gif_paths, output_folder))
+            self.after(0, lambda: self._on_complete(gif_paths, output_folder, output_format))
 
         except ImportError as e:
             error_msg = f"Missing module: {e}\n\nPlease ensure the core.gif_generator module is implemented."
@@ -931,7 +1107,7 @@ class GifMakeApp(ctk.CTk):
         except Exception as e:
             self.after(0, lambda: self._on_error(str(e)))
 
-    def _generate_bulk_worker(self, video_paths, output_folder, gif_duration, fps, resolution):
+    def _generate_bulk_worker(self, video_paths, output_folder, gif_duration, fps, resolution, output_format):
         """Worker function for bulk video processing."""
         try:
             from core.gif_generator import generate_gifs
@@ -950,23 +1126,24 @@ class GifMakeApp(ctk.CTk):
                 self.after(0, lambda vi=video_index, tv=total_videos, vf=video_filename:
                     self._update_bulk_progress(vi + 1, tv, vf))
 
-                # Create subfolder for this video's GIFs
+                # Create subfolder for this video's output files
                 video_output_folder = os.path.join(output_folder, video_filename)
                 os.makedirs(video_output_folder, exist_ok=True)
 
                 # Define progress callback for current video
-                def progress_callback(current, total, vi=video_index, tv=total_videos):
-                    self.after(0, lambda c=current, t=total: self._update_progress(c, t))
+                def progress_callback(current, total, vi=video_index, tv=total_videos, fmt=output_format):
+                    self.after(0, lambda c=current, t=total: self._update_progress(c, t, fmt))
 
                 try:
-                    # Generate GIFs for this video
+                    # Generate GIFs or clips for this video
                     gif_paths = generate_gifs(
                         video_path=video_path,
                         output_folder=video_output_folder,
                         gif_duration=gif_duration,
                         fps=fps,
                         resolution=resolution,
-                        progress_callback=progress_callback
+                        progress_callback=progress_callback,
+                        output_format=output_format
                     )
                     all_gif_paths.extend(gif_paths)
                 except Exception as e:
@@ -975,7 +1152,7 @@ class GifMakeApp(ctk.CTk):
                     continue
 
             # Signal completion on main thread
-            self.after(0, lambda: self._on_bulk_complete(all_gif_paths, output_folder, total_videos))
+            self.after(0, lambda: self._on_bulk_complete(all_gif_paths, output_folder, total_videos, output_format))
 
         except ImportError as e:
             error_msg = f"Missing module: {e}\n\nPlease ensure the core.gif_generator module is implemented."
@@ -989,55 +1166,83 @@ class GifMakeApp(ctk.CTk):
             text=f"Processing: {video_name} ({current_video} of {total_videos})"
         )
 
-    def _update_progress(self, current, total):
+    def _update_progress(self, current, total, output_format="gif"):
         """Update progress bar and status label (called on main thread)."""
         if total > 0:
             progress = current / total
             self.progress_bar.set(progress)
             percentage = int(progress * 100)
+            format_name = "clip" if output_format == "mp4" else "GIF"
             self.status_label.configure(
-                text=f"Status: Creating GIF {current} of {total} ({percentage}%)"
+                text=f"Status: Creating {format_name} {current} of {total} ({percentage}%)"
             )
 
-    def _on_complete(self, gif_paths, output_folder):
-        """Handle completion of GIF generation (called on main thread)."""
-        self.is_processing = False
-        self.generate_btn.configure(state="normal", text="Generate GIFs")
+    def _on_complete(self, gif_paths, output_folder, output_format="gif"):
+        """Handle completion of GIF/clip generation (called on main thread)."""
         self.progress_bar.set(1)
         self.bulk_progress_label.grid_remove()
 
         count = len(gif_paths) if gif_paths else 0
-        self.status_label.configure(text=f"Status: Complete! Generated {count} GIFs")
+        format_name = "clips" if output_format == "mp4" else "GIFs"
+        format_singular = "Clip" if output_format == "mp4" else "GIF"
+        btn_text = "Generate Clips" if output_format == "mp4" else "Generate GIFs"
 
-        # Show completion dialog
-        result = messagebox.askquestion(
-            "Generation Complete",
-            f"Successfully generated {count} GIFs!\n\nWould you like to open the output folder?",
-            icon="info"
-        )
+        # Check if upload is enabled
+        if self.upload_enabled and UPLOAD_AVAILABLE and self.selected_account and gif_paths:
+            self.status_label.configure(text=f"Status: Generated {count} {format_name}. Starting upload...")
+            thread = threading.Thread(
+                target=self._upload_files_worker,
+                args=(gif_paths, self.selected_account.name, output_folder),
+                daemon=True
+            )
+            thread.start()
+        else:
+            self.is_processing = False
+            self.generate_btn.configure(state="normal", text=btn_text)
+            self.status_label.configure(text=f"Status: Complete! Generated {count} {format_name}")
 
-        if result == "yes":
-            self._open_folder(output_folder)
+            # Show completion dialog
+            result = messagebox.askquestion(
+                "Generation Complete",
+                f"Successfully generated {count} {format_name}!\n\nWould you like to open the output folder?",
+                icon="info"
+            )
 
-    def _on_bulk_complete(self, gif_paths, output_folder, total_videos):
-        """Handle completion of bulk GIF generation (called on main thread)."""
-        self.is_processing = False
-        self.generate_btn.configure(state="normal", text="Generate GIFs")
+            if result == "yes":
+                self._open_folder(output_folder)
+
+    def _on_bulk_complete(self, gif_paths, output_folder, total_videos, output_format="gif"):
+        """Handle completion of bulk GIF/clip generation (called on main thread)."""
         self.progress_bar.set(1)
         self.bulk_progress_label.grid_remove()
 
         count = len(gif_paths) if gif_paths else 0
-        self.status_label.configure(text=f"Status: Complete! Generated {count} GIFs from {total_videos} videos")
+        format_name = "clips" if output_format == "mp4" else "GIFs"
+        btn_text = "Generate Clips" if output_format == "mp4" else "Generate GIFs"
 
-        # Show completion dialog
-        result = messagebox.askquestion(
-            "Bulk Generation Complete",
-            f"Successfully generated {count} GIFs from {total_videos} videos!\n\nEach video's GIFs are in their own subfolder.\n\nWould you like to open the output folder?",
-            icon="info"
-        )
+        # Check if upload is enabled
+        if self.upload_enabled and UPLOAD_AVAILABLE and self.selected_account and gif_paths:
+            self.status_label.configure(text=f"Status: Generated {count} {format_name} from {total_videos} videos. Starting upload...")
+            thread = threading.Thread(
+                target=self._upload_files_worker,
+                args=(gif_paths, self.selected_account.name, output_folder),
+                daemon=True
+            )
+            thread.start()
+        else:
+            self.is_processing = False
+            self.generate_btn.configure(state="normal", text=btn_text)
+            self.status_label.configure(text=f"Status: Complete! Generated {count} {format_name} from {total_videos} videos")
 
-        if result == "yes":
-            self._open_folder(output_folder)
+            # Show completion dialog
+            result = messagebox.askquestion(
+                "Bulk Generation Complete",
+                f"Successfully generated {count} {format_name} from {total_videos} videos!\n\nEach video's {format_name} are in their own subfolder.\n\nWould you like to open the output folder?",
+                icon="info"
+            )
+
+            if result == "yes":
+                self._open_folder(output_folder)
 
     def _on_error(self, error_msg):
         """Handle errors during GIF generation (called on main thread)."""
@@ -1048,6 +1253,79 @@ class GifMakeApp(ctk.CTk):
         self.bulk_progress_label.grid_remove()
 
         messagebox.showerror("Error", f"An error occurred during processing:\n\n{error_msg}")
+
+    def _upload_files_worker(self, file_paths, account_name, output_folder):
+        """Upload files after generation (runs in background thread)."""
+        try:
+            # Refresh tokens
+            UploadBridge.refresh_tokens()
+
+            # Get override settings from UI
+            tags_text = self.tags_entry.get()
+            tags = [t.strip() for t in tags_text.split(",")] if tags_text else []
+
+            override_settings = {
+                "tags": tags,
+                "description": self.desc_textbox.get("1.0", "end").strip(),
+                "content_type": self.content_dropdown.get(),
+                "keep_audio": self.audio_checkbox.get()
+            }
+
+            bridge = UploadBridge(account_name, override_settings)
+
+            # Upload each file
+            results = []
+            for i, file_path in enumerate(file_paths, 1):
+                self.after(0, lambda c=i, t=len(file_paths):
+                    self.status_label.configure(text=f"Status: Uploading {c}/{t}..."))
+
+                result = asyncio.run(bridge.upload_single_file(file_path, i, len(file_paths)))
+                results.append(result)
+
+            self.after(0, lambda: self._on_upload_complete(results, output_folder))
+        except Exception as e:
+            self.after(0, lambda: self._on_upload_error(str(e), output_folder))
+
+    def _on_upload_complete(self, results, output_folder):
+        """Handle upload completion (called on main thread)."""
+        self.is_processing = False
+        self.generate_btn.configure(state="normal", text="Generate GIFs")
+
+        success_count = sum(1 for r in results if r["success"])
+        failed_count = len(results) - success_count
+        self.status_label.configure(text=f"Status: Uploaded {success_count} success, {failed_count} failed")
+
+        # Show completion dialog
+        if failed_count > 0:
+            result = messagebox.askquestion(
+                "Upload Complete",
+                f"Upload complete!\n\nSuccessful: {success_count}\nFailed: {failed_count}\n\nWould you like to open the output folder?",
+                icon="warning"
+            )
+        else:
+            result = messagebox.askquestion(
+                "Upload Complete",
+                f"Successfully uploaded {success_count} files to RedGIFs!\n\nWould you like to open the output folder?",
+                icon="info"
+            )
+
+        if result == "yes":
+            self._open_folder(output_folder)
+
+    def _on_upload_error(self, error_msg, output_folder):
+        """Handle upload errors (called on main thread)."""
+        self.is_processing = False
+        self.generate_btn.configure(state="normal", text="Generate GIFs")
+        self.status_label.configure(text="Status: Upload error")
+
+        result = messagebox.askquestion(
+            "Upload Error",
+            f"Upload failed: {error_msg[:100]}\n\nGIFs were generated successfully.\n\nWould you like to open the output folder?",
+            icon="error"
+        )
+
+        if result == "yes":
+            self._open_folder(output_folder)
 
     def _open_folder(self, folder_path):
         """Open the specified folder in the system file explorer."""

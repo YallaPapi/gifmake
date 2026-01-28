@@ -6,13 +6,13 @@ from pathlib import Path
 
 import aiohttp
 
-from src import __version__
-from src.account_manager import AccountManager, Account
-from src.api_client import RedGifsAPIClient
-from src.uploader import VideoUploader
-from src.utils import find_video_files, format_time, check_ffprobe_installed
-from src.logger import setup_logger
-from src.results_saver import ResultsSaver
+from redgifs_core import __version__
+from redgifs_core.account_manager import AccountManager, Account
+from redgifs_core.api_client import RedGifsAPIClient
+from redgifs_core.uploader import VideoUploader
+from redgifs_core.utils import find_video_files, format_time, check_ffprobe_installed
+from redgifs_core.logger import setup_logger
+from redgifs_core.results_saver import ResultsSaver
 
 logger = setup_logger()
 
