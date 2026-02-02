@@ -5,10 +5,13 @@ Provides a clean interface between the GifMake GUI and the RedGIFs uploader modu
 """
 
 import asyncio
+import logging
 import sys
 import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Add redgifs directory to path so redgifs_core package can be found
 _redgifs_path = str(Path(__file__).parent / "redgifs")
@@ -66,6 +69,50 @@ class UploadBridge:
             if "keep_audio" in override_settings:
                 self.account.keep_audio = override_settings["keep_audio"]
 
+    async def _rotate_proxy(self) -> bool:
+        """
+        Rotate proxy IP by calling the rotation URL.
+
+        Only rotates if account has proxy_rotation_url configured.
+        Failures are logged as warnings but do not prevent upload attempts.
+
+        Returns:
+            True if rotation succeeded or not configured, False on failure
+        """
+        if not self.account.proxy_rotation_url:
+            return True  # No rotation URL configured, nothing to do
+
+        logger.info(f"[{self.account.name}] Rotating proxy IP...")
+
+        try:
+            resolver = aiohttp.resolver.ThreadedResolver()
+            connector = aiohttp.TCPConnector(resolver=resolver)
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+                async with session.get(self.account.proxy_rotation_url) as response:
+                    status = response.status
+                    if status == 200:
+                        logger.info(f"[{self.account.name}] Proxy IP rotated successfully")
+                        return True
+                    else:
+                        logger.warning(
+                            f"[{self.account.name}] Proxy rotation failed: HTTP {status} - "
+                            "will attempt upload anyway"
+                        )
+                        return False
+        except aiohttp.ClientError as e:
+            logger.warning(
+                f"[{self.account.name}] Proxy rotation network error: {e} - "
+                "will attempt upload anyway"
+            )
+            return False
+        except Exception as e:
+            logger.warning(
+                f"[{self.account.name}] Proxy rotation error: {e} - "
+                "will attempt upload anyway"
+            )
+            return False
+
     async def upload_single_file(
         self,
         file_path: str,
@@ -97,6 +144,9 @@ class UploadBridge:
                 "error": f"File not found: {file_path}",
                 "filename": filename
             }
+
+        # Rotate proxy IP before upload (if configured)
+        await self._rotate_proxy()
 
         try:
             api_client = RedGifsAPIClient(self.account)

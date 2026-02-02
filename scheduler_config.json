@@ -1,0 +1,24 @@
+{
+  "posts_per_day": 20,
+  "schedule_mode": "spread",
+  "active_hours": {
+    "start": "08:00",
+    "end": "23:00"
+  },
+  "batch_times": ["09:00", "15:00", "21:00"],
+  "sources": [
+    {
+      "type": "local",
+      "path": "C:/Users/asus/Desktop/projects/gifmake/videos/tasteofmarina",
+      "account": "tasteofmarina"
+    },
+    {
+      "type": "local",
+      "path": "C:/Users/asus/Desktop/projects/gifmake/videos/msdinokiss",
+      "account": "msdinokiss"
+    }
+  ],
+  "retry_max": 3,
+  "retry_backoff_minutes": [5, 30, 120],
+  "database_path": "scheduler.db"
+}
