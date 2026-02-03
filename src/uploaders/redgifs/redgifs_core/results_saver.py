@@ -1,8 +1,10 @@
 """Модуль для сохранения результатов загрузки в файл"""
 
+import csv
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 
 class ResultsSaver:
@@ -71,3 +73,98 @@ class ResultsSaver:
             f.write('\n'.join(lines))
 
         return str(filepath)
+
+    @staticmethod
+    def append_to_csv(
+        title: str,
+        redgifs_url: str,
+        account_name: str,
+        output_dir: Optional[Path] = None
+    ) -> str:
+        """
+        Append a single upload result to a CSV file.
+
+        Creates the file with headers if it doesn't exist, otherwise appends.
+        File naming: {account_name}_uploads_{date}.csv
+
+        Args:
+            title: Video title (usually the filename without extension)
+            redgifs_url: The RedGIFs URL for the uploaded video
+            account_name: Name of the account that uploaded the video
+            output_dir: Directory to save CSV (default: current working directory)
+
+        Returns:
+            Path to the CSV file
+        """
+        if output_dir is None:
+            output_dir = Path.cwd()
+
+        # Generate filename with date only (not time) so we append to same file all day
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        csv_filename = f"{account_name}_uploads_{date_str}.csv"
+        csv_path = output_dir / csv_filename
+
+        # Check if file exists to determine if we need headers
+        file_exists = csv_path.exists()
+
+        # Get current timestamp for the row
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Open in append mode
+        with open(csv_path, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+
+            # Write header if new file
+            if not file_exists:
+                writer.writerow(['title', 'redgifs_url', 'account_name', 'timestamp'])
+
+            # Write the data row
+            writer.writerow([title, redgifs_url, account_name, timestamp])
+
+        return str(csv_path)
+
+    @staticmethod
+    def save_results_to_csv(
+        results: List[Tuple],
+        account_name: str,
+        output_dir: Optional[Path] = None
+    ) -> Optional[str]:
+        """
+        Save all successful upload results to a CSV file.
+
+        This is a batch method that processes multiple results at once.
+        Only successful uploads (with valid RedGIFs URLs) are saved.
+
+        Args:
+            results: List of (filename, status) tuples from upload
+            account_name: Name of the account
+            output_dir: Directory to save CSV (default: current working directory)
+
+        Returns:
+            Path to CSV file if any successful uploads, None otherwise
+        """
+        if output_dir is None:
+            output_dir = Path.cwd()
+
+        csv_path = None
+
+        for result in results:
+            if not isinstance(result, tuple) or len(result) != 2:
+                continue
+
+            filename, status = result
+
+            # Only process successful uploads
+            if status.startswith("✓") and "redgifs.com/watch" in status:
+                url = status.replace("✓ ", "").strip()
+                # Use filename without extension as title
+                title = Path(filename).stem
+
+                csv_path = ResultsSaver.append_to_csv(
+                    title=title,
+                    redgifs_url=url,
+                    account_name=account_name,
+                    output_dir=output_dir
+                )
+
+        return csv_path

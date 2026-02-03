@@ -187,12 +187,24 @@ async def upload_for_account(account: Account, base_dir: Path) -> dict:
     if uploader.rate_limit.reached and uploader.rate_limit.delay > 0:
         logger.warning(f"[{account.name}] GIF LIMIT REACHED - can upload more in: {format_time(uploader.rate_limit.delay)}")
 
-    # Save results for this account
+    # Save results for this account (TXT format)
     try:
         results_file = ResultsSaver.save_results(results, prefix=f"{account.name}_")
         logger.info(f"[{account.name}] Results saved: {results_file}")
     except Exception as e:
         logger.error(f"[{account.name}] Failed to save results: {e}")
+
+    # Save successful uploads to CSV (for Reddit posting workflow)
+    try:
+        csv_file = ResultsSaver.save_results_to_csv(
+            results=results,
+            account_name=account.name,
+            output_dir=videos_dir  # Save CSV in same folder as videos
+        )
+        if csv_file:
+            logger.info(f"[{account.name}] CSV exported: {csv_file}")
+    except Exception as e:
+        logger.error(f"[{account.name}] Failed to export CSV: {e}")
 
     return {
         "account": account.name,
