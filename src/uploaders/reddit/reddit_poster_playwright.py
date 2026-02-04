@@ -588,8 +588,8 @@ def main():
     # client.stop_browser(profile_id)
 
 
-def main_batch():
-    """Example: Connect to AdsPower and batch post from CSV"""
+def main_batch(csv_file: str):
+    """Batch post from CSV - groups posts by profile_id and processes each profile"""
 
     # Load config
     config_path = Path(__file__).parent.parent / "redgifs" / "adspower_config.json"
@@ -599,65 +599,207 @@ def main_batch():
     config = json.loads(config_path.read_text())
     client = AdsPowerClient(config["adspower_api_base"], config["api_key"])
 
-    # Start browser - use first profile from config
-    profile = config["profiles"][0]
-    profile_id = profile["profile_id"]
-    account_name = profile["account_name"]
+    # CSV path from argument
+    csv_path = Path(csv_file)
 
-    logger.info(f"Starting browser for {account_name}...")
-    browser_data = client.start_browser(profile_id)
-
-    if not browser_data:
-        logger.error("Failed to start browser")
+    if not csv_path.exists():
+        logger.error(f"CSV file not found: {csv_path}")
         return
 
-    ws_endpoint = browser_data['ws']['puppeteer']
-    logger.info(f"Connecting to: {ws_endpoint}")
+    # Read CSV and group by profile_id
+    rows_by_profile = {}
+    with open(csv_path, 'r', encoding='utf-8', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            profile_id = row.get('profile_id', '').strip()
+            if not profile_id:
+                logger.warning(f"Row missing profile_id, skipping: {row}")
+                continue
+            if profile_id not in rows_by_profile:
+                rows_by_profile[profile_id] = []
+            rows_by_profile[profile_id].append(row)
 
-    with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(ws_endpoint)
+    if not rows_by_profile:
+        logger.error("No valid rows found in CSV (all missing profile_id?)")
+        return
 
-        contexts = browser.contexts
-        if contexts:
-            context = contexts[0]
-            pages = context.pages
-            if pages:
-                page = pages[0]
-            else:
-                page = context.new_page()
-        else:
-            context = browser.new_context()
-            page = context.new_page()
+    logger.info(f"Found {len(rows_by_profile)} profile(s) with posts:")
+    for pid, rows in rows_by_profile.items():
+        logger.info(f"  {pid}: {len(rows)} posts")
 
-        # BATCH POST FROM CSV - Configure path below
-        csv_path = Path(__file__).parent / "posts.csv"  # Change to your CSV path
+    # Process each profile
+    all_results = []
+    total_success = 0
+    total_failed = 0
+    total_skipped = 0
 
-        if not csv_path.exists():
-            # Create example CSV if it doesn't exist
-            logger.info(f"Creating example CSV at {csv_path}")
-            example_content = """subreddit,title,url,flair
-test,My first post title,https://redgifs.com/watch/example1,
-test,My second post title,https://redgifs.com/watch/example2,
-"""
-            csv_path.write_text(example_content)
-            logger.info("Please edit the CSV file with your actual posts, then run again.")
-            return
+    for profile_id, profile_rows in rows_by_profile.items():
+        logger.info("=" * 50)
+        logger.info(f"STARTING PROFILE: {profile_id}")
+        logger.info(f"Posts to make: {len(profile_rows)}")
+        logger.info("=" * 50)
 
-        # Run batch post
-        results = batch_post_from_csv(
-            page=page,
-            csv_path=str(csv_path),
-            delay_seconds=60,  # 60 seconds between posts
-            mark_nsfw=True
-        )
+        # Start browser for this profile
+        browser_data = client.start_browser(profile_id)
+        if not browser_data:
+            logger.error(f"Failed to start browser for profile {profile_id}")
+            # Mark all rows for this profile as failed
+            for row in profile_rows:
+                all_results.append({
+                    'profile_id': profile_id,
+                    'subreddit': row.get('subreddit', ''),
+                    'title': row.get('title', ''),
+                    'url': row.get('url', ''),
+                    'flair': row.get('flair', ''),
+                    'status': 'failed',
+                    'error': 'Failed to start AdsPower browser',
+                    'posted_at': ''
+                })
+                total_failed += 1
+            continue
 
-        logger.info(f"Batch complete: {results['success']}/{results['total']} succeeded")
-        logger.info(f"Results saved to: {results['output_file']}")
+        ws_endpoint = browser_data['ws']['puppeteer']
+        logger.info(f"Connecting to: {ws_endpoint}")
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.connect_over_cdp(ws_endpoint)
+
+                contexts = browser.contexts
+                if contexts:
+                    context = contexts[0]
+                    pages = context.pages
+                    if pages:
+                        page = pages[0]
+                    else:
+                        page = context.new_page()
+                else:
+                    context = browser.new_context()
+                    page = context.new_page()
+
+                # Post each row for this profile
+                seen_urls = set()
+                for i, row in enumerate(profile_rows):
+                    subreddit = row.get('subreddit', '').strip()
+                    title = row.get('title', '').strip()
+                    url = row.get('url', '').strip()
+                    flair = row.get('flair', '').strip()
+
+                    result = {
+                        'profile_id': profile_id,
+                        'subreddit': subreddit,
+                        'title': title,
+                        'url': url,
+                        'flair': flair,
+                        'status': 'pending',
+                        'error': '',
+                        'posted_at': ''
+                    }
+
+                    # Validate
+                    if not subreddit or not title or not url:
+                        result['status'] = 'skipped'
+                        result['error'] = 'Missing required field'
+                        total_skipped += 1
+                        all_results.append(result)
+                        logger.warning(f"[{i+1}/{len(profile_rows)}] Skipped: missing field")
+                        continue
+
+                    if url in seen_urls:
+                        result['status'] = 'skipped'
+                        result['error'] = 'Duplicate URL'
+                        total_skipped += 1
+                        all_results.append(result)
+                        logger.warning(f"[{i+1}/{len(profile_rows)}] Skipped: duplicate URL")
+                        continue
+
+                    seen_urls.add(url)
+
+                    # Post
+                    logger.info(f"[{i+1}/{len(profile_rows)}] Posting to r/{subreddit}: {title[:40]}...")
+                    try:
+                        success = post_link_to_subreddit(
+                            page=page,
+                            subreddit=subreddit,
+                            title=title,
+                            url=url,
+                            mark_nsfw=True,
+                            flair=flair if flair else None
+                        )
+
+                        if success:
+                            result['status'] = 'success'
+                            result['posted_at'] = datetime.now().isoformat()
+                            total_success += 1
+                            logger.info(f"[{i+1}/{len(profile_rows)}] SUCCESS")
+                        else:
+                            result['status'] = 'failed'
+                            result['error'] = 'Post submission failed'
+                            total_failed += 1
+                            logger.error(f"[{i+1}/{len(profile_rows)}] FAILED")
+
+                    except Exception as e:
+                        result['status'] = 'failed'
+                        result['error'] = str(e)
+                        total_failed += 1
+                        logger.error(f"[{i+1}/{len(profile_rows)}] ERROR: {e}")
+
+                    all_results.append(result)
+
+                    # Delay between posts (skip after last post of this profile)
+                    if i < len(profile_rows) - 1:
+                        logger.info("Waiting 60 seconds before next post...")
+                        time.sleep(30)  # TODO: change back to 60 for production
+
+        except Exception as e:
+            logger.error(f"Error with profile {profile_id}: {e}")
+            # Mark remaining rows as failed
+            for row in profile_rows:
+                if not any(r['url'] == row.get('url') for r in all_results):
+                    all_results.append({
+                        'profile_id': profile_id,
+                        'subreddit': row.get('subreddit', ''),
+                        'title': row.get('title', ''),
+                        'url': row.get('url', ''),
+                        'flair': row.get('flair', ''),
+                        'status': 'failed',
+                        'error': str(e),
+                        'posted_at': ''
+                    })
+                    total_failed += 1
+
+        logger.info(f"Finished profile {profile_id}")
+
+    # Write final results
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_path = csv_path.parent / f"posts_results_{timestamp}.csv"
+    fieldnames = ['profile_id', 'subreddit', 'title', 'url', 'flair', 'status', 'error', 'posted_at']
+    with open(output_path, 'w', encoding='utf-8', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(all_results)
+
+    # Final summary
+    logger.info("=" * 50)
+    logger.info("BATCH COMPLETE - ALL PROFILES")
+    logger.info(f"  Total:   {len(all_results)}")
+    logger.info(f"  Success: {total_success}")
+    logger.info(f"  Failed:  {total_failed}")
+    logger.info(f"  Skipped: {total_skipped}")
+    logger.info(f"  Results: {output_path}")
+    logger.info("=" * 50)
 
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1 and sys.argv[1] == "--batch":
-        main_batch()
+        # Expect: python script.py --batch path/to/file.csv
+        if len(sys.argv) < 3:
+            print("Usage: python reddit_poster_playwright.py --batch <csv_file>")
+            print("Example: python reddit_poster_playwright.py --batch posts.csv")
+            sys.exit(1)
+        csv_file = sys.argv[2]
+        main_batch(csv_file)
     else:
         main()

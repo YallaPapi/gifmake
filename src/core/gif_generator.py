@@ -89,19 +89,22 @@ def generate_gifs(
     fps: int = 15,
     resolution: Optional[int] = 480,
     progress_callback: Optional[Callable[[int, int], None]] = None,
-    output_format: str = "gif"
+    output_format: str = "gif",
+    preserve_quality: bool = False
 ) -> List[str]:
     """
-    Generate multiple GIFs from a video file.
+    Generate multiple GIFs or video clips from a video file.
 
     Args:
         video_path: Path to the source video file
-        output_folder: Directory to save generated GIFs
-        gif_duration: Duration of each GIF in seconds (default: 4)
-        fps: Frame rate for the GIFs (default: 15)
-        resolution: Height in pixels (None for original, default: 480)
+        output_folder: Directory to save generated GIFs/clips
+        gif_duration: Duration of each GIF/clip in seconds (default: 4)
+        fps: Frame rate for GIFs (ignored for mp4 when preserve_quality=True)
+        resolution: Height in pixels (ignored for mp4 when preserve_quality=True)
         progress_callback: Optional callback function(current, total) for progress updates
         output_format: Output format - "gif" or "mp4" (default: "gif")
+        preserve_quality: If True and output_format="mp4", preserves original quality
+                         (no FPS/resolution reduction, uses high-quality encoding)
 
     Returns:
         List of paths to generated GIF or MP4 files
@@ -156,21 +159,37 @@ def generate_gifs(
             ffmpeg_path = get_ffmpeg_path()
 
             if output_format == "mp4":
-                # MP4 video clip encoding with libx264
-                cmd = [
-                    ffmpeg_path,
-                    "-y",
-                    "-ss", str(start_time),
-                    "-t", str(actual_duration),
-                    "-i", video_path,
-                    "-vf", f"fps={fps},{scale_filter}",
-                    "-c:v", "libx264",
-                    "-preset", "fast",
-                    "-crf", "23",
-                    "-c:a", "aac",
-                    "-b:a", "128k",
-                    output_path
-                ]
+                if preserve_quality:
+                    # Preserve quality mode: no FPS/resolution reduction, high-quality encoding
+                    cmd = [
+                        ffmpeg_path,
+                        "-y",
+                        "-ss", str(start_time),
+                        "-t", str(actual_duration),
+                        "-i", video_path,
+                        "-c:v", "libx264",
+                        "-preset", "slow",
+                        "-crf", "18",
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        output_path
+                    ]
+                else:
+                    # Standard mode: apply FPS and resolution settings
+                    cmd = [
+                        ffmpeg_path,
+                        "-y",
+                        "-ss", str(start_time),
+                        "-t", str(actual_duration),
+                        "-i", video_path,
+                        "-vf", f"fps={fps},{scale_filter}",
+                        "-c:v", "libx264",
+                        "-preset", "fast",
+                        "-crf", "23",
+                        "-c:a", "aac",
+                        "-b:a", "128k",
+                        output_path
+                    ]
 
                 result = subprocess.run(
                     cmd,
@@ -316,7 +335,8 @@ def generate_gifs_bulk(
     resolution: Optional[int] = 480,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     video_callback: Optional[Callable[[int, int, str], None]] = None,
-    output_format: str = "gif"
+    output_format: str = "gif",
+    preserve_quality: bool = False
 ) -> Dict[str, Any]:
     """
     Generate GIFs or video clips from multiple video files.
@@ -333,6 +353,7 @@ def generate_gifs_bulk(
         progress_callback: Called for each output completed within current video: callback(num, total)
         video_callback: Called when starting each video: callback(video_num, total_videos, video_filename)
         output_format: Output format - "gif" or "mp4" (default: "gif")
+        preserve_quality: If True and output_format="mp4", preserves original quality
 
     Returns:
         Dict with keys:
@@ -373,7 +394,8 @@ def generate_gifs_bulk(
                 fps=fps,
                 resolution=resolution,
                 progress_callback=progress_callback,
-                output_format=output_format
+                output_format=output_format,
+                preserve_quality=preserve_quality
             )
 
             results["success"].append({

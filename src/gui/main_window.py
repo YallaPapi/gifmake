@@ -438,6 +438,17 @@ class GifMakeApp(ctk.CTk):
 
         row += 1
 
+        # ----- Preserve Quality (only shown for Video Clips) -----
+        self.preserve_quality_checkbox = ctk.CTkCheckBox(
+            self.settings_frame,
+            text="Preserve Quality (no FPS/resolution reduction)",
+            font=ctk.CTkFont(size=13),
+        )
+        self.preserve_quality_checkbox.grid(row=row, column=0, columnspan=2, sticky="w", padx=padding_x, pady=(0, padding_y))
+        self.preserve_quality_checkbox.grid_remove()  # Hidden by default (only for Video Clips)
+
+        row += 1
+
         # ----- Upload to RedGIFs -----
         self.upload_checkbox = ctk.CTkCheckBox(
             self.settings_frame,
@@ -955,9 +966,11 @@ class GifMakeApp(ctk.CTk):
         if value == "Video Clips":
             self.generate_btn.configure(text="Generate Clips")
             self.duration_setting_label.configure(text="Clip Duration:")
+            self.preserve_quality_checkbox.grid()  # Show preserve quality option
         else:
             self.generate_btn.configure(text="Generate GIFs")
             self.duration_setting_label.configure(text="GIF Duration:")
+            self.preserve_quality_checkbox.grid_remove()  # Hide preserve quality option
 
     def on_upload_toggle(self):
         """Handle upload checkbox toggle."""
@@ -1060,25 +1073,26 @@ class GifMakeApp(ctk.CTk):
         resolution_key = self.resolution_dropdown.get()
         resolution = self.RESOLUTION_OPTIONS.get(resolution_key)
         output_format = "mp4" if self.format_segmented.get() == "Video Clips" else "gif"
+        preserve_quality = self.preserve_quality_checkbox.get() if output_format == "mp4" else False
 
         # Start worker thread
         if self.bulk_mode:
             self.bulk_progress_label.grid()  # Show bulk progress label
             thread = threading.Thread(
                 target=self._generate_bulk_worker,
-                args=(self.video_paths.copy(), output_folder, gif_duration, fps, resolution, output_format),
+                args=(self.video_paths.copy(), output_folder, gif_duration, fps, resolution, output_format, preserve_quality),
                 daemon=True
             )
         else:
             self.bulk_progress_label.grid_remove()  # Hide bulk progress label
             thread = threading.Thread(
                 target=self._generate_worker,
-                args=(self.video_path, output_folder, gif_duration, fps, resolution, output_format),
+                args=(self.video_path, output_folder, gif_duration, fps, resolution, output_format, preserve_quality),
                 daemon=True
             )
         thread.start()
 
-    def _generate_worker(self, video_path, output_folder, gif_duration, fps, resolution, output_format):
+    def _generate_worker(self, video_path, output_folder, gif_duration, fps, resolution, output_format, preserve_quality=False):
         """Worker function that runs in a separate thread (single video mode)."""
         try:
             from core.gif_generator import generate_gifs
@@ -1095,7 +1109,8 @@ class GifMakeApp(ctk.CTk):
                 fps=fps,
                 resolution=resolution,
                 progress_callback=progress_callback,
-                output_format=output_format
+                output_format=output_format,
+                preserve_quality=preserve_quality
             )
 
             # Signal completion on main thread
@@ -1107,7 +1122,7 @@ class GifMakeApp(ctk.CTk):
         except Exception as e:
             self.after(0, lambda: self._on_error(str(e)))
 
-    def _generate_bulk_worker(self, video_paths, output_folder, gif_duration, fps, resolution, output_format):
+    def _generate_bulk_worker(self, video_paths, output_folder, gif_duration, fps, resolution, output_format, preserve_quality=False):
         """Worker function for bulk video processing."""
         try:
             from core.gif_generator import generate_gifs
@@ -1143,7 +1158,8 @@ class GifMakeApp(ctk.CTk):
                         fps=fps,
                         resolution=resolution,
                         progress_callback=progress_callback,
-                        output_format=output_format
+                        output_format=output_format,
+                        preserve_quality=preserve_quality
                     )
                     all_gif_paths.extend(gif_paths)
                 except Exception as e:

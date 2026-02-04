@@ -1,0 +1,87 @@
+{
+  "profiles": {
+    "jenny_24": {
+      "profile_id": "jenny_24",
+      "display_name": "Jenny",
+      "attributes": {
+        "age": 24,
+        "gender": "F",
+        "hair_color": "redhead",
+        "body_type": "petite",
+        "ethnicity": "white",
+        "bust_size": "small"
+      },
+      "title_templates": {
+        "default": "{title}",
+        "age_gender": "[{age}F] {title}",
+        "simple_gender": "[F] {title}",
+        "emoji": "{title}"
+      },
+      "flair_mappings": {
+        "gonewild": "OC",
+        "petitegonewild": "Verified",
+        "realgirls": "OC",
+        "redheads": null
+      },
+      "content_tags": [
+        "petite",
+        "redhead",
+        "amateur",
+        "young",
+        "small-tits"
+      ],
+      "reddit_account": {
+        "username": "jenny_plays_24",
+        "age_days": 45,
+        "karma": 1500,
+        "verified_subreddits": [
+          "gonewild",
+          "petitegonewild"
+        ]
+      },
+      "created_at": "2024-01-15T10:30:00"
+    },
+    "maria_40": {
+      "profile_id": "maria_40",
+      "display_name": "Maria",
+      "attributes": {
+        "age": 40,
+        "gender": "F",
+        "hair_color": "brunette",
+        "body_type": "thick",
+        "ethnicity": "latina",
+        "bust_size": "large"
+      },
+      "title_templates": {
+        "default": "{title}",
+        "age_gender": "[{age}F] {title}",
+        "milf_style": "MILF {title}",
+        "latina_style": "Latina MILF - {title}"
+      },
+      "flair_mappings": {
+        "gonewildcurvy": "OC",
+        "latinas": "Verified Latina",
+        "milf": "OC",
+        "thick": null
+      },
+      "content_tags": [
+        "milf",
+        "thick",
+        "latina",
+        "boobs",
+        "curvy",
+        "mature"
+      ],
+      "reddit_account": {
+        "username": "maria_mature",
+        "age_days": 90,
+        "karma": 5000,
+        "verified_subreddits": [
+          "gonewildcurvy",
+          "latinas"
+        ]
+      },
+      "created_at": "2024-01-10T08:00:00"
+    }
+  }
+}
