@@ -160,18 +160,15 @@ def generate_gifs(
 
             if output_format == "mp4":
                 if preserve_quality:
-                    # Preserve quality mode: no FPS/resolution reduction, high-quality encoding
+                    # Preserve quality mode: stream copy, no re-encoding
                     cmd = [
                         ffmpeg_path,
                         "-y",
                         "-ss", str(start_time),
                         "-t", str(actual_duration),
                         "-i", video_path,
-                        "-c:v", "libx264",
-                        "-preset", "slow",
-                        "-crf", "18",
-                        "-c:a", "aac",
-                        "-b:a", "192k",
+                        "-c", "copy",
+                        "-avoid_negative_ts", "make_zero",
                         output_path
                     ]
                 else:

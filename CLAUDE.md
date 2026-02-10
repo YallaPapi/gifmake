@@ -56,6 +56,8 @@ Headers returned by Reddit:
 
 ## Subreddit Scraping
 
+**Main Script:** `scrape_v3.py` (with proxy + heartbeat monitoring)
+
 Endpoints:
 - `https://www.reddit.com/r/{sub}/about.json` - subreddit info
 - `https://www.reddit.com/r/{sub}/about/rules.json` - rules list
@@ -66,10 +68,22 @@ Data to collect:
 
 Files:
 - `all_subreddits.txt` - full list of 5,345 subreddits
-- `already_scraped.txt` - successfully scraped (skip these)
-- `subreddit_data_v2.json` - scraped data output
+- `subreddit_data_v3.json` - scraped data output (dict keyed by subreddit name)
+- `scrape_progress_v3.json` - progress tracking for resume
+- `scrape_errors.log` - error log
+- `scrape_heartbeat.txt` - liveness monitoring
 - `subreddit_analysis.json` - categorization (easy/hard to post)
 - `SUBREDDIT_GROUPS.md` - organized by content niche
+
+Supporting modules:
+- `scrape_error_handler.py` - error classification
+- `scrape_progress_tracker.py` - progress tracking
+- `scrape_watchdog.py` - monitoring tool
+- `run_scraper.py` - orchestrator (runs v3 + watchdog)
+
+Archived (do not use):
+- `scripts/archived/scrape_all_subreddits.py` - no proxy support
+- `scripts/archived/scrape_v2.py` - superseded by v3
 
 ## Key Rules
 
@@ -101,8 +115,11 @@ cd src/uploaders/redgifs && python main.py
 # Run Reddit poster
 python src/uploaders/reddit/reddit_poster_playwright.py
 
-# Run subreddit scraper (with proxy)
-python scrape_v2.py
+# Run subreddit scraper (with proxy + heartbeat)
+python scrape_v3.py
+
+# Or use the orchestrator (includes watchdog)
+python run_scraper.py --no-test
 ```
 
 ## When Working on This Project
