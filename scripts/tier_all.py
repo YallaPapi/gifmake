@@ -15,7 +15,7 @@ OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "..", "subreddit_tiers_gro
 
 BATCH_SIZE = 30
 WORKERS = 10
-GROK_MODEL = "grok-3-mini"
+GROK_MODEL = "grok-4-1-fast-reasoning"
 GROK_URL = "https://api.x.ai/v1/chat/completions"
 API_KEY = os.environ.get("GROK_API_KEY", "")
 MAX_RETRIES = 3

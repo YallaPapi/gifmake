@@ -6,6 +6,8 @@ Connects to existing AdsPower browser profiles
 
 import csv
 import json
+import os
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -17,6 +19,71 @@ from playwright.sync_api import sync_playwright, Page, Browser
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+DEBUG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "debug")
+
+
+def dismiss_over18(page: Page):
+    """Dismiss the 'Mature Content — Are you over 18?' popup if present."""
+    try:
+        btn = page.locator('button:has-text("Yes, I\'m Over 18")')
+        if btn.count() > 0 and btn.first.is_visible():
+            btn.first.click()
+            page.wait_for_timeout(1000)
+            logger.info("Dismissed 18+ popup")
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _dump_failure(page: Page, subreddit: str, step: str):
+    """Save screenshot + HTML dump when something fails. Saved to data/debug/."""
+    os.makedirs(DEBUG_DIR, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    prefix = f"{ts}_{subreddit}_{step}"
+
+    try:
+        screenshot_path = os.path.join(DEBUG_DIR, f"{prefix}.png")
+        page.screenshot(path=screenshot_path, full_page=False)
+        logger.info(f"Debug screenshot: {screenshot_path}")
+    except Exception as e:
+        logger.warning(f"Screenshot failed: {e}")
+
+    try:
+        html_path = os.path.join(DEBUG_DIR, f"{prefix}.html")
+        html = page.content()
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html)
+        logger.info(f"Debug HTML dump: {html_path}")
+    except Exception as e:
+        logger.warning(f"HTML dump failed: {e}")
+
+
+def _extract_post_url(page_url: str, subreddit: str) -> Optional[str]:
+    """Extract a clean permalink from Reddit's redirect URL.
+
+    Reddit redirects to different URL patterns after posting:
+      Old: https://www.reddit.com/r/Sub/comments/abc123/post_title/
+      New: https://www.reddit.com/r/Sub/?created=t3_abc123&createdPostType=IMAGE
+    Both contain the post ID which we can build a clean URL from.
+    """
+    # New Shreddit UI: ?created=t3_XXXXX
+    match = re.search(r'created=t3_([a-z0-9]+)', page_url)
+    if match:
+        post_id = match.group(1)
+        return f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/"
+
+    # Old UI: /comments/XXXXX/
+    match = re.search(r'/comments/([a-z0-9]+)/', page_url)
+    if match:
+        return page_url.split("?")[0]  # Strip query params
+
+    # Already a /comments/ URL without trailing slash
+    if "/comments/" in page_url:
+        return page_url.split("?")[0]
+
+    return None
 
 
 class AdsPowerClient:
@@ -205,7 +272,9 @@ def post_link_to_subreddit(
     submit_url = f"https://www.reddit.com/r/{subreddit}/submit?type=link"
     logger.info(f"Navigating to {submit_url}")
     page.goto(submit_url, timeout=60000)
-    page.wait_for_timeout(5000)  # Just wait 5 seconds instead of networkidle
+    page.wait_for_timeout(3000)
+    dismiss_over18(page)
+    page.wait_for_timeout(2000)
 
     # Fill title
     logger.info(f"Filling title: {title[:50]}...")
@@ -328,6 +397,361 @@ def post_link_to_subreddit(
         return True
     else:
         logger.info(f"Current URL: {current_url}")
+        return "/submit" not in current_url
+
+
+def _try_select_flair(page: Page):
+    """Try to open the flair picker and select the first available flair.
+
+    Reddit's new UI uses <r-post-flairs-modal> which opens a flair list.
+    We click the "Add flair" button, wait for the list, pick the first one.
+    """
+    try:
+        # Click the flair button to open the picker
+        flair_openers = [
+            'button:has-text("Add flair")',
+            '#post-flair-modal',
+            'r-post-flairs-modal',
+            '[class*="flair"]',
+        ]
+        opened = False
+        for sel in flair_openers:
+            try:
+                btn = page.locator(sel)
+                if btn.count() > 0 and btn.first.is_visible():
+                    btn.first.click()
+                    opened = True
+                    break
+            except:
+                continue
+
+        if not opened:
+            logger.warning("Could not open flair picker")
+            return
+
+        page.wait_for_timeout(2000)
+
+        # Look for flair options in the opened modal/dropdown
+        flair_selectors = [
+            'faceplate-tracker[noun="flair"]',  # New Shreddit flair items
+            '[data-testid*="flair"]',
+            'li[class*="flair"]',
+            'div[class*="flair"] span',
+            'label:has(input[name="flair"])',    # Radio button style
+        ]
+
+        for sel in flair_selectors:
+            try:
+                items = page.locator(sel)
+                if items.count() > 0:
+                    items.first.click()
+                    logger.info(f"Selected first flair via: {sel}")
+                    page.wait_for_timeout(500)
+
+                    # Look for an "Apply" / "Save" / confirm button
+                    for confirm_sel in ['button:has-text("Apply")', 'button:has-text("Save")',
+                                        'button:has-text("Done")', 'button[type="submit"]']:
+                        try:
+                            confirm = page.locator(confirm_sel)
+                            if confirm.count() > 0 and confirm.first.is_visible():
+                                confirm.first.click()
+                                break
+                        except:
+                            continue
+                    return
+            except:
+                continue
+
+        logger.warning("Could not find any flair options")
+    except Exception as e:
+        logger.warning(f"Flair selection failed: {e}")
+
+
+def post_file_to_subreddit(
+    page: Page,
+    subreddit: str,
+    title: str,
+    file_path: str,
+    mark_nsfw: bool = True,
+    flair: Optional[str] = None,
+    humanizer=None,
+) -> bool:
+    """
+    Post a file (image/video) directly to a subreddit via upload.
+
+    Args:
+        page: Playwright page object
+        subreddit: Subreddit name (without r/)
+        title: Post title
+        file_path: Path to the image/video file to upload
+        mark_nsfw: Whether to mark as NSFW
+        flair: Optional flair text to select
+        humanizer: Optional Humanizer instance for human-like interactions
+
+    Returns:
+        True if successful
+    """
+    from pathlib import Path as P
+    if not P(file_path).exists():
+        logger.error(f"File not found: {file_path}")
+        return False
+
+    # Navigate to submit page (image/video type)
+    submit_url = f"https://www.reddit.com/r/{subreddit}/submit?type=image"
+    logger.info(f"Navigating to {submit_url}")
+    page.goto(submit_url, timeout=60000)
+    page.wait_for_timeout(3000)
+    dismiss_over18(page)
+    page.wait_for_timeout(2000)
+
+    # Fill title
+    logger.info(f"Filling title: {title[:50]}...")
+    title_selectors = [
+        'textarea[name="title"]',
+        '[data-testid="post-title-input"]',
+        'textarea[placeholder*="title" i]',
+    ]
+
+    title_filled = False
+    for selector in title_selectors:
+        try:
+            if page.locator(selector).count() > 0:
+                if humanizer:
+                    humanizer.type_text(selector, title)
+                else:
+                    page.fill(selector, title)
+                title_filled = True
+                break
+        except:
+            continue
+
+    if not title_filled:
+        logger.error("Could not find title input")
+        _dump_failure(page, subreddit, "no_title_input")
+        return False
+
+    # Upload file via file_chooser interception.
+    # Reddit's Shreddit UI renders the upload zone inside shadow DOM of
+    # <r-post-media-input>, containing a hidden <input type="file"> and
+    # a <button id="device-upload-button">. Clicking the button triggers
+    # the native file dialog, which we intercept with expect_file_chooser().
+    page.wait_for_timeout(2000)
+    logger.info(f"Uploading file: {P(file_path).name}")
+
+    file_uploaded = False
+
+    # Approach 1: Click the shadow DOM upload button via JS + intercept file chooser
+    try:
+        with page.expect_file_chooser(timeout=5000) as fc_info:
+            # Click the upload button inside shadow DOM via JS
+            page.evaluate("""() => {
+                const el = document.querySelector('r-post-media-input');
+                if (el && el.shadowRoot) {
+                    const btn = el.shadowRoot.querySelector('#device-upload-button');
+                    if (btn) { btn.click(); return; }
+                }
+                // Fallback: click the wrapper div (also inside shadow root)
+                if (el && el.shadowRoot) {
+                    const wrapper = el.shadowRoot.querySelector('#fileInputInnerWrapper');
+                    if (wrapper) { wrapper.click(); return; }
+                }
+            }""")
+        file_chooser = fc_info.value
+        file_chooser.set_files(file_path)
+        file_uploaded = True
+        logger.info("File uploaded via shadow DOM button + file_chooser")
+    except Exception as e:
+        logger.debug(f"Shadow DOM file chooser approach failed: {e}")
+
+    # Approach 2: Try Playwright's shadow-piercing locator for the upload button
+    if not file_uploaded:
+        try:
+            with page.expect_file_chooser(timeout=5000) as fc_info:
+                page.locator('#device-upload-button').click()
+            file_chooser = fc_info.value
+            file_chooser.set_files(file_path)
+            file_uploaded = True
+            logger.info("File uploaded via locator #device-upload-button + file_chooser")
+        except Exception as e:
+            logger.debug(f"Locator file chooser approach failed: {e}")
+
+    # Approach 3: Direct set_input_files via JS on shadow DOM file input
+    if not file_uploaded:
+        try:
+            # Playwright's set_input_files can work if we get the right element handle
+            file_input = page.locator('r-post-media-input input[type="file"]')
+            if file_input.count() > 0:
+                file_input.first.set_input_files(file_path)
+                file_uploaded = True
+                logger.info("File uploaded via shadow DOM input set_input_files")
+        except Exception as e:
+            logger.debug(f"Shadow DOM direct input failed: {e}")
+
+    # Approach 4: Fallback for older Reddit UI
+    if not file_uploaded:
+        for selector in ['input[type="file"]', 'input[accept*="image"]']:
+            try:
+                fi = page.locator(selector)
+                if fi.count() > 0:
+                    fi.first.set_input_files(file_path)
+                    file_uploaded = True
+                    logger.info(f"File uploaded via fallback: {selector}")
+                    break
+            except:
+                continue
+
+    if not file_uploaded:
+        logger.error("Could not upload file — all approaches failed")
+        _dump_failure(page, subreddit, "no_file_input")
+        return False
+
+    # Wait for upload to process
+    logger.info("Waiting for upload to process...")
+    page.wait_for_timeout(8000)
+
+    # Verify the image actually uploaded by checking if the upload zone is still visible
+    try:
+        still_empty = page.evaluate("""() => {
+            const el = document.querySelector('r-post-media-input');
+            if (el && el.shadowRoot) {
+                const info = el.shadowRoot.querySelector('#inputInfo');
+                return info ? info.offsetParent !== null : false;
+            }
+            return false;
+        }""")
+        if still_empty:
+            logger.warning("Upload zone still visible — image may not have uploaded")
+            _dump_failure(page, subreddit, "upload_not_visible")
+    except:
+        pass
+
+    # Wait for upload thumbnail/processing to finish
+    page.wait_for_timeout(3000)
+
+    # Check for upload progress/completion indicators
+    try:
+        loading_selectors = [
+            '[class*="loading"]',
+            '[class*="progress"]',
+            '[class*="uploading"]',
+        ]
+        for sel in loading_selectors:
+            try:
+                loading = page.locator(sel)
+                if loading.count() > 0 and loading.is_visible():
+                    loading.wait_for(state="hidden", timeout=30000)
+            except:
+                pass
+    except:
+        pass
+
+    # Mark NSFW
+    if mark_nsfw:
+        logger.info("Marking as NSFW...")
+        page.wait_for_timeout(1000)
+        nsfw_selectors = [
+            'button[aria-label*="NSFW" i]',
+            '[data-testid="nsfw-btn"]',
+            'button:has-text("NSFW")',
+        ]
+        for selector in nsfw_selectors:
+            try:
+                btn = page.locator(selector)
+                if btn.count() > 0:
+                    aria = btn.get_attribute("aria-pressed")
+                    if aria != "true":
+                        if humanizer:
+                            humanizer.human_click(selector)
+                        else:
+                            btn.click()
+                    break
+            except:
+                continue
+
+    # Select flair if specified
+    if flair:
+        page.wait_for_timeout(1000)
+        select_flair(page, flair)
+
+    # Check for required flair before submitting
+    try:
+        flair_error = page.locator('text="Your post must contain post flair"')
+        flair_btn = page.locator('#post-flair-modal, r-post-flairs-modal, button:has-text("Add flair")')
+        if flair_error.count() > 0 or (flair_btn.count() > 0 and flair_btn.first.get_attribute("flairs-required") is not None):
+            logger.warning(f"Flair required for r/{subreddit} — attempting to select first available flair")
+            _try_select_flair(page)
+            page.wait_for_timeout(1000)
+    except Exception as e:
+        logger.debug(f"Flair check: {e}")
+
+    # Submit
+    logger.info("Submitting post...")
+    page.wait_for_timeout(1000)
+
+    # Reddit's new Shreddit UI uses custom web components for the submit button:
+    #   <r-post-form-submit-button id="submit-post-button">
+    # The actual <button> is rendered inside the shadow DOM.
+    # We try multiple approaches: ID selector, shadow DOM pierce, classic selectors.
+    submit_selectors = [
+        '#submit-post-button',                     # New Shreddit: custom element by ID
+        'r-post-form-submit-button[post-action-type="submit"]',  # New Shreddit: by tag+attr
+        'button[type="submit"]:has-text("Post")',  # Old Reddit
+        '[data-testid="submit-post-btn"]',         # Old Reddit test ID
+        'button:has-text("Post")',                  # Generic fallback
+    ]
+
+    submitted = False
+    for selector in submit_selectors:
+        try:
+            btn = page.locator(selector)
+            if btn.count() > 0:
+                # For custom elements, click triggers the shadow DOM button
+                btn.first.click()
+                submitted = True
+                logger.info(f"Clicked submit via: {selector}")
+                break
+        except Exception as e:
+            logger.debug(f"Submit selector {selector} failed: {e}")
+            continue
+
+    # Last resort: execute JS to find and click the button
+    if not submitted:
+        try:
+            clicked = page.evaluate("""() => {
+                // Try the custom element's click
+                let el = document.getElementById('submit-post-button');
+                if (el) { el.click(); return 'submit-post-button'; }
+                // Try shadow DOM
+                let buttons = document.querySelectorAll('button');
+                for (let b of buttons) {
+                    if (b.textContent.trim() === 'Post' && !b.disabled) {
+                        b.click(); return 'button-post-text';
+                    }
+                }
+                return null;
+            }""")
+            if clicked:
+                submitted = True
+                logger.info(f"Clicked submit via JS: {clicked}")
+        except Exception as e:
+            logger.debug(f"JS submit fallback failed: {e}")
+
+    if not submitted:
+        logger.error("Could not find submit button")
+        _dump_failure(page, subreddit, "no_submit_btn")
+        return False
+
+    # Wait for redirect (file posts can take longer to process)
+    page.wait_for_timeout(10000)
+    current_url = page.url
+
+    post_url = _extract_post_url(current_url, subreddit)
+    if post_url:
+        logger.info(f"SUCCESS! Post URL: {post_url}")
+        return True
+    else:
+        logger.warning(f"Uncertain result. URL after submit: {current_url}")
+        _dump_failure(page, subreddit, "uncertain_result")
         return "/submit" not in current_url
 
 

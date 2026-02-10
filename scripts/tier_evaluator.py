@@ -10,7 +10,7 @@ import time
 import requests
 
 BATCH_SIZE = 30  # subs per API call
-GROK_MODEL = "grok-3-mini"
+GROK_MODEL = "grok-4-1-fast-reasoning"
 GROK_URL = "https://api.x.ai/v1/chat/completions"
 MAX_RETRIES = 3
 RETRY_DELAY = 5

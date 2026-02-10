@@ -22,6 +22,12 @@ try:
 except ImportError:
     UPLOAD_AVAILABLE = False
 
+try:
+    from gui.auto_poster_tab import AutoPosterTab
+    AUTO_POSTER_AVAILABLE = True
+except ImportError:
+    AUTO_POSTER_AVAILABLE = False
+
 
 class GifMakeApp(ctk.CTk):
     """Main application window for GifMake video to GIF converter."""
@@ -81,14 +87,27 @@ class GifMakeApp(ctk.CTk):
     def _create_widgets(self):
         """Create all UI widgets."""
 
-        # Configure root window grid for scrollable container
+        # Configure root window grid
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # Create a scrollable main container that fills the window
-        # This ensures content is always accessible even if window is small
+        # Create tabview for main navigation
+        self.tabview = ctk.CTkTabview(self, fg_color="transparent")
+        self.tabview.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+
+        # Tab 1: Video Converter (existing functionality)
+        converter_tab = self.tabview.add("Video Converter")
+        converter_tab.grid_columnconfigure(0, weight=1)
+        converter_tab.grid_rowconfigure(0, weight=1)
+
+        # Tab 2: Auto Poster
+        poster_tab = self.tabview.add("Auto Poster")
+        poster_tab.grid_columnconfigure(0, weight=1)
+        poster_tab.grid_rowconfigure(0, weight=1)
+
+        # Create scrollable container inside the converter tab
         self.scroll_container = ctk.CTkScrollableFrame(
-            self,
+            converter_tab,
             fg_color="transparent",
             corner_radius=0
         )
@@ -99,6 +118,18 @@ class GifMakeApp(ctk.CTk):
         self.main_frame = ctk.CTkFrame(self.scroll_container, fg_color="transparent")
         self.main_frame.grid(row=0, column=0, sticky="nsew", padx=30, pady=20)
         self.main_frame.grid_columnconfigure(0, weight=1)
+
+        # Initialize Auto Poster tab
+        if AUTO_POSTER_AVAILABLE:
+            poster_scroll = ctk.CTkScrollableFrame(
+                poster_tab, fg_color="transparent", corner_radius=0
+            )
+            poster_scroll.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+            poster_scroll.grid_columnconfigure(0, weight=1)
+            poster_frame = ctk.CTkFrame(poster_scroll, fg_color="transparent")
+            poster_frame.grid(row=0, column=0, sticky="nsew", padx=30, pady=20)
+            poster_frame.grid_columnconfigure(0, weight=1)
+            self.auto_poster = AutoPosterTab(poster_frame, self)
 
         # Configure row weights for proper expansion
         self.main_frame.grid_rowconfigure(0, weight=0)  # Mode toggle
