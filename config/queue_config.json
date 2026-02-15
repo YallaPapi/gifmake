@@ -1,0 +1,41 @@
+{
+  "adspower_api_base": "http://127.0.0.1:50325",
+  "adspower_api_key": "caeba572837f3da2adc39f45f0751da9",
+  "workers": 4,
+  "min_nsfw_days": 14,
+  "subs_per_file": 8,
+  "min_score": 20,
+  "max_subscribers": 50000,
+  "min_subscribers": 2500,
+  "daily_post_limit": 8,
+  "browse_range_sec": [80, 150],
+  "session_range_min": [15, 30],
+  "comments_range": [10, 20],
+  "spoof_enabled": true,
+  "inter_account_delay_sec": [30, 90],
+  "content_bank_root": "D:\\content_bank",
+  "max_posts_per_file": 8,
+  "proxy_groups": {
+    "proxy_1": {
+      "rotation_url": "",
+      "wait_after_rotate_sec": 10,
+      "accounts": []
+    },
+    "proxy_2": {
+      "rotation_url": "",
+      "wait_after_rotate_sec": 10,
+      "accounts": []
+    },
+    "proxy_3": {
+      "rotation_url": "",
+      "wait_after_rotate_sec": 10,
+      "accounts": []
+    },
+    "proxy_4": {
+      "rotation_url": "",
+      "wait_after_rotate_sec": 10,
+      "accounts": []
+    }
+  },
+  "log_file": "data/queue_runner.log"
+}

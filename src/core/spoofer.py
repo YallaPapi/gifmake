@@ -22,6 +22,7 @@ import logging
 import os
 import random
 import subprocess
+import secrets
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -538,22 +539,18 @@ def spoof_file(input_path, output_dir=None, options=None):
         output_dir = SPOOF_OUTPUT_DIR
     os.makedirs(output_dir, exist_ok=True)
 
-    # Generate unique output filename
+    # Generate random output filename (phone-style, no trace of original name)
     ext = Path(input_path).suffix.lower()
-    base = Path(input_path).stem
-    unique_id = random.randint(10000, 99999)
-    output_name = f"{base}_spoof_{unique_id}{ext}"
-    output_path = os.path.join(output_dir, output_name)
+    rand = secrets.token_hex(4)  # 8 random hex chars
 
-    # Force appropriate output extensions
     if _is_video(input_path):
-        if ext != ".mp4":
-            output_path = os.path.join(output_dir, f"{base}_spoof_{unique_id}.mp4")
+        out_ext = ".mp4" if ext != ".mp4" else ext
+        output_path = os.path.join(output_dir, f"VID_{rand}{out_ext}")
         result = spoof_video(input_path, output_path, options)
     elif _is_image(input_path):
         # Force .jpg for HEIC (Reddit doesn't accept HEIC uploads)
-        if ext in {".heic", ".heif"}:
-            output_path = os.path.join(output_dir, f"{base}_spoof_{unique_id}.jpg")
+        out_ext = ".jpg" if ext in {".heic", ".heif"} else ext
+        output_path = os.path.join(output_dir, f"IMG_{rand}{out_ext}")
         result = spoof_image(input_path, output_path, options)
     else:
         return None, {"success": False, "error": f"Unsupported file type: {ext}"}

@@ -17,6 +17,7 @@ def _get_conn():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     _init_tables(conn)
+    _migrate_tables(conn)
     return conn
 
 
@@ -69,7 +70,36 @@ def _init_tables(conn):
             total_joins INTEGER DEFAULT 0,
             status TEXT DEFAULT 'warming'
         );
+
+        CREATE TABLE IF NOT EXISTS cqs_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id TEXT NOT NULL,
+            cqs_value TEXT,
+            raw_response TEXT,
+            checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_cqs_profile
+            ON cqs_checks(profile_id, checked_at);
     """)
+    conn.commit()
+
+
+def _migrate_tables(conn):
+    """Add new columns to existing tables. Safe to call repeatedly."""
+    migrations = [
+        "ALTER TABLE posts ADD COLUMN score INTEGER",
+        "ALTER TABLE posts ADD COLUMN upvote_ratio REAL",
+        "ALTER TABLE posts ADD COLUMN num_comments INTEGER",
+        "ALTER TABLE posts ADD COLUMN is_removed INTEGER DEFAULT 0",
+        "ALTER TABLE posts ADD COLUMN removed_reason TEXT",
+        "ALTER TABLE posts ADD COLUMN last_checked_at TIMESTAMP",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass  # Column already exists
     conn.commit()
 
 
@@ -195,6 +225,159 @@ def export_results_csv(output_path, profile_id=None):
     return len(results)
 
 
+# ---- Post performance tracking ----
+
+def update_post_metrics(post_url, score, upvote_ratio, num_comments,
+                        is_removed=False, removed_reason=None):
+    """Update score/metrics for a post after checking Reddit."""
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """UPDATE posts SET score=?, upvote_ratio=?, num_comments=?,
+               is_removed=?, removed_reason=?, last_checked_at=?
+               WHERE post_url=?""",
+            (score, upvote_ratio, num_comments, int(is_removed),
+             removed_reason, datetime.now().isoformat(), post_url)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_unchecked_posts(profile_id=None, hours=72):
+    """Get successful posts that need score checking.
+
+    Returns posts that either haven't been checked yet or were posted
+    within the last `hours` hours (scores keep changing).
+    """
+    conn = _get_conn()
+    try:
+        cutoff = datetime.now().timestamp() - (hours * 3600)
+        cutoff_iso = datetime.fromtimestamp(cutoff).isoformat()
+
+        if profile_id:
+            rows = conn.execute(
+                """SELECT id, post_url, subreddit, content_file, posted_at
+                   FROM posts
+                   WHERE status='success' AND post_url IS NOT NULL
+                   AND profile_id=?
+                   AND (last_checked_at IS NULL OR posted_at >= ?)
+                   ORDER BY posted_at DESC""",
+                (profile_id, cutoff_iso)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT id, post_url, subreddit, content_file, posted_at
+                   FROM posts
+                   WHERE status='success' AND post_url IS NOT NULL
+                   AND (last_checked_at IS NULL OR posted_at >= ?)
+                   ORDER BY posted_at DESC""",
+                (cutoff_iso,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_sub_performance(profile_id=None):
+    """Get performance stats grouped by subreddit.
+
+    Returns list of dicts: {subreddit, post_count, avg_score, max_score,
+                            removed_count, last_posted}
+    """
+    conn = _get_conn()
+    try:
+        where = "WHERE status='success' AND score IS NOT NULL"
+        params = ()
+        if profile_id:
+            where += " AND profile_id=?"
+            params = (profile_id,)
+
+        rows = conn.execute(
+            f"""SELECT subreddit,
+                       COUNT(*) as post_count,
+                       ROUND(AVG(score), 1) as avg_score,
+                       MAX(score) as max_score,
+                       SUM(is_removed) as removed_count,
+                       MAX(posted_at) as last_posted
+                FROM posts {where}
+                GROUP BY subreddit
+                ORDER BY avg_score DESC""",
+            params
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_content_performance(profile_id=None):
+    """Get performance stats grouped by content file.
+
+    Returns list of dicts: {content_file, sub_count, avg_score, best_sub,
+                            best_score}
+    """
+    conn = _get_conn()
+    try:
+        where = "WHERE status='success' AND score IS NOT NULL"
+        params = ()
+        if profile_id:
+            where += " AND profile_id=?"
+            params = (profile_id,)
+
+        rows = conn.execute(
+            f"""SELECT content_file,
+                       COUNT(*) as sub_count,
+                       ROUND(AVG(score), 1) as avg_score,
+                       MAX(score) as best_score
+                FROM posts {where}
+                GROUP BY content_file
+                ORDER BY avg_score DESC""",
+            params
+        ).fetchall()
+        results = [dict(row) for row in rows]
+
+        # Find best sub for each content file
+        for r in results:
+            best = conn.execute(
+                f"""SELECT subreddit FROM posts
+                    {where} AND content_file=?
+                    ORDER BY score DESC LIMIT 1""",
+                params + (r["content_file"],)
+            ).fetchone()
+            r["best_sub"] = best["subreddit"] if best else ""
+
+        return results
+    finally:
+        conn.close()
+
+
+def get_hot_subs(profile_id=None, min_posts=2, min_avg_score=5):
+    """Get subs that consistently perform well.
+
+    Returns subreddit names where avg score >= min_avg_score
+    and post count >= min_posts.
+    """
+    conn = _get_conn()
+    try:
+        where = "WHERE status='success' AND score IS NOT NULL"
+        params = ()
+        if profile_id:
+            where += " AND profile_id=?"
+            params = (profile_id,)
+
+        rows = conn.execute(
+            f"""SELECT subreddit, AVG(score) as avg_score, COUNT(*) as cnt
+                FROM posts {where}
+                GROUP BY subreddit
+                HAVING cnt >= ? AND avg_score >= ?
+                ORDER BY avg_score DESC""",
+            params + (min_posts, min_avg_score)
+        ).fetchall()
+        return [row["subreddit"] for row in rows]
+    finally:
+        conn.close()
+
+
 # ---- Account warmup tracking ----
 
 def init_warmup(profile_id):
@@ -266,5 +449,44 @@ def record_activity(profile_id, activity_type, count=1):
             (count, today, profile_id)
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def record_cqs(profile_id, cqs_value, raw_response=""):
+    """Save a CQS check result."""
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO cqs_checks (profile_id, cqs_value, raw_response) VALUES (?, ?, ?)",
+            (profile_id, str(cqs_value), raw_response[:2000])
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_cqs_history(profile_id, limit=30):
+    """Get recent CQS check results for a profile."""
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT cqs_value, checked_at FROM cqs_checks WHERE profile_id = ? ORDER BY checked_at DESC LIMIT ?",
+            (profile_id, limit)
+        ).fetchall()
+        return [{"cqs": row[0], "checked_at": row[1]} for row in rows]
+    finally:
+        conn.close()
+
+
+def get_latest_cqs(profile_id):
+    """Get the most recent CQS value for a profile, or None."""
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT cqs_value, checked_at FROM cqs_checks WHERE profile_id = ? ORDER BY checked_at DESC LIMIT 1",
+            (profile_id,)
+        ).fetchone()
+        return {"cqs": row[0], "checked_at": row[1]} if row else None
     finally:
         conn.close()

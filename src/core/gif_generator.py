@@ -160,7 +160,7 @@ def generate_gifs(
 
             if output_format == "mp4":
                 if preserve_quality:
-                    # Preserve quality mode: stream copy, no re-encoding
+                    # Lossless cut: stream copy, no re-encoding
                     cmd = [
                         ffmpeg_path,
                         "-y",
@@ -172,7 +172,7 @@ def generate_gifs(
                         output_path
                     ]
                 else:
-                    # Standard mode: apply FPS and resolution settings
+                    # Re-encode mode: try NVENC first (GPU), fall back to libx264
                     cmd = [
                         ffmpeg_path,
                         "-y",
@@ -180,11 +180,11 @@ def generate_gifs(
                         "-t", str(actual_duration),
                         "-i", video_path,
                         "-vf", f"fps={fps},{scale_filter}",
-                        "-c:v", "libx264",
-                        "-preset", "fast",
-                        "-crf", "23",
+                        "-c:v", "h264_nvenc",
+                        "-preset", "p4",
+                        "-cq", "20",
                         "-c:a", "aac",
-                        "-b:a", "128k",
+                        "-b:a", "192k",
                         output_path
                     ]
 
@@ -194,6 +194,29 @@ def generate_gifs(
                     text=True,
                     creationflags=creationflags
                 )
+
+                if result.returncode != 0 and not preserve_quality:
+                    # NVENC failed — fall back to CPU encoding (libx264)
+                    cmd_fallback = [
+                        ffmpeg_path,
+                        "-y",
+                        "-ss", str(start_time),
+                        "-t", str(actual_duration),
+                        "-i", video_path,
+                        "-vf", f"fps={fps},{scale_filter}",
+                        "-c:v", "libx264",
+                        "-preset", "fast",
+                        "-crf", "18",
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        output_path
+                    ]
+                    result = subprocess.run(
+                        cmd_fallback,
+                        capture_output=True,
+                        text=True,
+                        creationflags=creationflags
+                    )
 
                 if result.returncode != 0:
                     raise RuntimeError(f"FFmpeg error: {result.stderr}")

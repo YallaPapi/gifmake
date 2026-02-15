@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "active_hours": {
+    "start": "09:00",
+    "end": "23:00"
+  },
+  "warmup_enabled": true,
+  "posting_enabled": false,
+  "accounts": "all",
+  "check_interval_seconds": 60,
+  "time_jitter_minutes": 15,
+  "proxy_stagger_minutes": 5
+}

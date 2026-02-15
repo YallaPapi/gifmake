@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import asyncio
+import json
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,6 +29,8 @@ try:
 except ImportError:
     AUTO_POSTER_AVAILABLE = False
 
+WARMUP_TAB_AVAILABLE = False  # Warmup is now integrated into AutoPosterTab
+
 
 class GifMakeApp(ctk.CTk):
     """Main application window for GifMake video to GIF converter."""
@@ -45,25 +48,46 @@ class GifMakeApp(ctk.CTk):
     # Resolution options mapping
     RESOLUTION_OPTIONS = {
         "Original": None,
+        "4K (2160p)": 2160,
+        "1440p": 1440,
+        "1080p": 1080,
         "720p": 720,
         "480p": 480,
         "360p": 360
     }
 
     # Frame rate options
-    FPS_OPTIONS = ["10", "15", "20", "24", "30"]
+    FPS_OPTIONS = ["10", "15", "20", "24", "30", "60"]
+
+    # UI Scale presets
+    SCALE_OPTIONS = {
+        "90%": 0.9,
+        "100%": 1.0,
+        "110%": 1.1,
+        "120%": 1.2,
+        "130%": 1.3,
+        "140%": 1.4,
+        "150%": 1.5,
+    }
+    UI_SETTINGS_PATH = os.path.join(
+        os.path.dirname(__file__), "..", "..", "config", "ui_settings.json"
+    )
 
     def __init__(self):
         super().__init__()
 
-        # Window configuration
-        self.title("GifMake")
-        self.geometry("650x850")
-        # Set minimum window size to ensure all content is visible
-        self.minsize(550, 750)
+        # Load and apply UI scale BEFORE creating widgets
+        saved_scale = self._load_ui_scale()
+        ctk.set_widget_scaling(saved_scale)
 
-        # Set dark theme
-        ctk.set_appearance_mode("dark")
+        # Window configuration
+        self.title("GifMake Studio")
+        self.geometry("980x960")
+        self.minsize(700, 800)
+
+        # Theme — load saved preference, default dark
+        self._appearance_mode = self._load_appearance_mode()
+        ctk.set_appearance_mode(self._appearance_mode)
         ctk.set_default_color_theme("blue")
 
         # State variables
@@ -87,12 +111,21 @@ class GifMakeApp(ctk.CTk):
     def _create_widgets(self):
         """Create all UI widgets."""
 
-        # Configure root window grid
+        # Configure root window grid — tabview expands, scale bar stays at bottom
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=0)
 
         # Create tabview for main navigation
-        self.tabview = ctk.CTkTabview(self, fg_color="transparent")
+        self.tabview = ctk.CTkTabview(
+            self,
+            fg_color="transparent",
+            segmented_button_fg_color=("#DDE6F2", "#1F2937"),
+            segmented_button_selected_color=("#0F766E", "#0F766E"),
+            segmented_button_selected_hover_color=("#115E59", "#115E59"),
+            segmented_button_unselected_hover_color=("#CBD5E1", "#334155"),
+            text_color=("#0F172A", "#E2E8F0"),
+        )
         self.tabview.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
 
         # Tab 1: Video Converter (existing functionality)
@@ -100,10 +133,10 @@ class GifMakeApp(ctk.CTk):
         converter_tab.grid_columnconfigure(0, weight=1)
         converter_tab.grid_rowconfigure(0, weight=1)
 
-        # Tab 2: Auto Poster
-        poster_tab = self.tabview.add("Auto Poster")
-        poster_tab.grid_columnconfigure(0, weight=1)
-        poster_tab.grid_rowconfigure(0, weight=1)
+        # Tab 2: Reddit (combined poster + warmup)
+        reddit_tab = self.tabview.add("Reddit")
+        reddit_tab.grid_columnconfigure(0, weight=1)
+        reddit_tab.grid_rowconfigure(0, weight=1)
 
         # Create scrollable container inside the converter tab
         self.scroll_container = ctk.CTkScrollableFrame(
@@ -119,17 +152,21 @@ class GifMakeApp(ctk.CTk):
         self.main_frame.grid(row=0, column=0, sticky="nsew", padx=30, pady=20)
         self.main_frame.grid_columnconfigure(0, weight=1)
 
-        # Initialize Auto Poster tab
+        # Combined Reddit scrollable area for poster + warmup
+        reddit_scroll = ctk.CTkScrollableFrame(
+            reddit_tab, fg_color="transparent", corner_radius=0
+        )
+        reddit_scroll.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+        reddit_scroll.grid_columnconfigure(0, weight=1)
+        scroll_row = 0
+
+        # --- Poster section ---
         if AUTO_POSTER_AVAILABLE:
-            poster_scroll = ctk.CTkScrollableFrame(
-                poster_tab, fg_color="transparent", corner_radius=0
-            )
-            poster_scroll.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
-            poster_scroll.grid_columnconfigure(0, weight=1)
-            poster_frame = ctk.CTkFrame(poster_scroll, fg_color="transparent")
-            poster_frame.grid(row=0, column=0, sticky="nsew", padx=30, pady=20)
+            poster_frame = ctk.CTkFrame(reddit_scroll, fg_color="transparent")
+            poster_frame.grid(row=scroll_row, column=0, sticky="nsew", padx=30, pady=20)
             poster_frame.grid_columnconfigure(0, weight=1)
             self.auto_poster = AutoPosterTab(poster_frame, self)
+            scroll_row += 1
 
         # Configure row weights for proper expansion
         self.main_frame.grid_rowconfigure(0, weight=0)  # Mode toggle
@@ -201,7 +238,7 @@ class GifMakeApp(ctk.CTk):
             corner_radius=15,
             border_width=2,
             border_color=("#3B8ED0", "#1F6AA5"),
-            fg_color=("#E8F4FD", "#1A1A2E")
+            fg_color=("#EAF3FF", "#1F2937")
         )
         self.drop_frame.grid(row=1, column=0, sticky="ew", pady=(0, 20))
         self.drop_frame.grid_columnconfigure(0, weight=1)
@@ -236,7 +273,7 @@ class GifMakeApp(ctk.CTk):
             self.drop_content_frame,
             text="or Click to Browse",
             font=ctk.CTkFont(size=12),
-            text_color=("#666666", "#AAAAAA")
+            text_color=("#333333", "#CBD5E1")
         )
         self.drop_sublabel.grid(row=2, column=0, pady=(0, 5))
 
@@ -244,8 +281,8 @@ class GifMakeApp(ctk.CTk):
         self.format_label = ctk.CTkLabel(
             self.drop_content_frame,
             text="Supports: MP4, MOV, AVI, MKV, WebM",
-            font=ctk.CTkFont(size=10),
-            text_color=("#888888", "#777777")
+            font=ctk.CTkFont(size=11),
+            text_color=("#555555", "#94A3B8")
         )
         self.format_label.grid(row=3, column=0, pady=(0, 15))
 
@@ -274,7 +311,7 @@ class GifMakeApp(ctk.CTk):
             self.info_frame,
             text="Selected: No video selected",
             font=ctk.CTkFont(size=13),
-            text_color=("#555555", "#CCCCCC"),
+            text_color=("#333333", "#CBD5E1"),
             anchor="w"
         )
         self.selected_label.grid(row=0, column=0, sticky="w")
@@ -284,7 +321,7 @@ class GifMakeApp(ctk.CTk):
             self.info_frame,
             text="Duration: --:-- | Estimated GIFs: --",
             font=ctk.CTkFont(size=12),
-            text_color=("#777777", "#999999"),
+            text_color=("#444444", "#CBD5E1"),
             anchor="w"
         )
         self.duration_label.grid(row=1, column=0, sticky="w", pady=(5, 0))
@@ -296,7 +333,7 @@ class GifMakeApp(ctk.CTk):
         self.video_list_container = ctk.CTkFrame(
             self.main_frame,
             corner_radius=10,
-            fg_color=("#F5F5F5", "#2B2B3D")
+            fg_color=("#F5F5F5", "#1F2937")
         )
         # Initially hidden - will be shown in bulk mode
         self.video_list_container.grid(row=3, column=0, sticky="ew", pady=(0, 15))
@@ -320,7 +357,7 @@ class GifMakeApp(ctk.CTk):
             self.video_list_header,
             text="",
             font=ctk.CTkFont(size=11),
-            text_color=("#666666", "#AAAAAA")
+            text_color=("#333333", "#CBD5E1")
         )
         self.video_count_label.grid(row=0, column=1, sticky="w", padx=(10, 0))
 
@@ -352,7 +389,7 @@ class GifMakeApp(ctk.CTk):
         self.settings_frame = ctk.CTkFrame(
             self.main_frame,
             corner_radius=10,
-            fg_color=("#F5F5F5", "#2B2B3D")
+            fg_color=("#F5F5F5", "#1F2937")
         )
         self.settings_frame.grid(row=5, column=0, sticky="ew", pady=(0, 20))
         self.settings_frame.grid_columnconfigure(1, weight=1)
@@ -420,7 +457,7 @@ class GifMakeApp(ctk.CTk):
             self.settings_frame,
             text="FPS",
             font=ctk.CTkFont(size=12),
-            text_color=("#666666", "#AAAAAA")
+            text_color=("#333333", "#CBD5E1")
         )
         self.fps_unit_label.grid(row=row, column=1, sticky="w", padx=(175, 0), pady=padding_y)
 
@@ -472,7 +509,7 @@ class GifMakeApp(ctk.CTk):
         # ----- Preserve Quality (only shown for Video Clips) -----
         self.preserve_quality_checkbox = ctk.CTkCheckBox(
             self.settings_frame,
-            text="Preserve Quality (no FPS/resolution reduction)",
+            text="Lossless cut (keep original quality — no re-encoding)",
             font=ctk.CTkFont(size=13),
         )
         self.preserve_quality_checkbox.grid(row=row, column=0, columnspan=2, sticky="w", padx=padding_x, pady=(0, padding_y))
@@ -495,15 +532,47 @@ class GifMakeApp(ctk.CTk):
         row += 1
 
         # Upload settings frame (expandable)
-        self.upload_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=("#E8E8E8", "#2A2A3E"))
+        self.upload_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=("#EAECF0", "#111827"))
         self.upload_settings_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=padding_x, pady=(0, padding_y))
         self.upload_settings_frame.grid_columnconfigure(1, weight=1)
         self.upload_settings_frame.grid_remove()  # Hidden by default
 
-        # Account dropdown
+        # Browser profile (AdsPower) selector
         upload_row = 0
-        self.account_label = ctk.CTkLabel(self.upload_settings_frame, text="Account:", font=ctk.CTkFont(size=12))
-        self.account_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=(10, 5))
+        self.browser_profile_label = ctk.CTkLabel(
+            self.upload_settings_frame, text="Browser Profile:", font=ctk.CTkFont(size=12))
+        self.browser_profile_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=(10, 5))
+
+        profile_row = ctk.CTkFrame(self.upload_settings_frame, fg_color="transparent")
+        profile_row.grid(row=upload_row, column=1, sticky="ew", padx=10, pady=(10, 5))
+
+        self.browser_profile_var = ctk.StringVar(value="")
+        self.browser_profile_dropdown = ctk.CTkOptionMenu(
+            profile_row, variable=self.browser_profile_var,
+            values=["No profiles"], width=200)
+        self.browser_profile_dropdown.pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            profile_row, text="+ Add", width=60,
+            fg_color="#334155", hover_color="#1F2937",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self._add_browser_profile
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            profile_row, text="Remove", width=65,
+            fg_color="#B91C1C", hover_color="#991B1B",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self._remove_browser_profile
+        ).pack(side="left", padx=2)
+
+        self._load_browser_profiles()
+
+        upload_row += 1
+
+        # API Account dropdown (legacy — RedGifs API tokens)
+        self.account_label = ctk.CTkLabel(self.upload_settings_frame, text="API Account:", font=ctk.CTkFont(size=12))
+        self.account_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=5)
 
         self.account_dropdown = ctk.CTkComboBox(
             self.upload_settings_frame,
@@ -512,7 +581,7 @@ class GifMakeApp(ctk.CTk):
             state="readonly",
             command=self.on_account_change
         )
-        self.account_dropdown.grid(row=upload_row, column=1, sticky="w", padx=10, pady=(10, 5))
+        self.account_dropdown.grid(row=upload_row, column=1, sticky="w", padx=10, pady=5)
 
         upload_row += 1
 
@@ -551,6 +620,39 @@ class GifMakeApp(ctk.CTk):
         # Keep Audio
         self.audio_checkbox = ctk.CTkCheckBox(self.upload_settings_frame, text="Keep Audio")
         self.audio_checkbox.grid(row=upload_row, column=0, columnspan=2, sticky="w", padx=10, pady=(5, 10))
+
+        row += 1
+
+        # ----- Add to Reddit Campaign -----
+        campaign_row = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        campaign_row.grid(row=row, column=0, columnspan=2, sticky="ew",
+                          padx=padding_x, pady=(0, padding_y))
+
+        self.reddit_campaign_checkbox = ctk.CTkCheckBox(
+            campaign_row,
+            text="Add to Reddit campaign",
+            font=ctk.CTkFont(size=13),
+        )
+        self.reddit_campaign_checkbox.pack(side="left")
+
+        ctk.CTkLabel(
+            campaign_row, text="Account:",
+            font=ctk.CTkFont(size=12),
+            text_color=("#555555", "#94A3B8"),
+        ).pack(side="left", padx=(15, 5))
+
+        self.campaign_profile_var = ctk.StringVar()
+        self.campaign_profile_dropdown = ctk.CTkOptionMenu(
+            campaign_row, variable=self.campaign_profile_var,
+            values=["No profiles"], width=200,
+            font=ctk.CTkFont(size=12),
+        )
+        self.campaign_profile_dropdown.pack(side="left")
+        self._load_campaign_profiles()
+
+        if not AUTO_POSTER_AVAILABLE:
+            self.reddit_campaign_checkbox.configure(state="disabled")
+            self.campaign_profile_dropdown.configure(state="disabled")
 
         row += 1
 
@@ -632,10 +734,128 @@ class GifMakeApp(ctk.CTk):
             self.progress_frame,
             text="Status: Ready",
             font=ctk.CTkFont(size=12),
-            text_color=("#666666", "#AAAAAA"),
+            text_color=("#333333", "#CBD5E1"),
             anchor="w"
         )
         self.status_label.grid(row=2, column=0, sticky="w")
+
+        # ===== BOTTOM SCALE BAR =====
+        self._create_scale_bar()
+
+    def _create_scale_bar(self):
+        """Create a bottom bar with UI scale and theme toggle."""
+        self.scale_bar = ctk.CTkFrame(self, height=32, fg_color=("#E8E8E8", "#111827"))
+        self.scale_bar.grid(row=1, column=0, sticky="ew")
+        self.scale_bar.grid_columnconfigure(0, weight=1)
+
+        # Left-aligned theme toggle
+        theme_frame = ctk.CTkFrame(self.scale_bar, fg_color="transparent")
+        theme_frame.grid(row=0, column=0, sticky="w", padx=10, pady=2)
+
+        self.theme_toggle = ctk.CTkSwitch(
+            theme_frame,
+            text="Dark Mode",
+            font=ctk.CTkFont(size=11),
+            width=40, height=20,
+            onvalue="dark", offvalue="light",
+            command=self._on_theme_toggle,
+        )
+        self.theme_toggle.pack(side="left")
+        if self._appearance_mode == "dark":
+            self.theme_toggle.select()
+        else:
+            self.theme_toggle.deselect()
+
+        # Right-aligned scale control
+        scale_frame = ctk.CTkFrame(self.scale_bar, fg_color="transparent")
+        scale_frame.grid(row=0, column=0, sticky="e", padx=10, pady=2)
+
+        ctk.CTkLabel(
+            scale_frame, text="UI Scale:",
+            font=ctk.CTkFont(size=11), text_color=("#333", "#94A3B8")
+        ).pack(side="left", padx=(0, 5))
+
+        # Find current scale label
+        current_scale = self._load_ui_scale()
+        current_label = "110%"
+        for label, val in self.SCALE_OPTIONS.items():
+            if abs(val - current_scale) < 0.01:
+                current_label = label
+                break
+
+        self.scale_dropdown = ctk.CTkOptionMenu(
+            scale_frame,
+            values=list(self.SCALE_OPTIONS.keys()),
+            width=80,
+            height=24,
+            font=ctk.CTkFont(size=11),
+            command=self._on_scale_change,
+        )
+        self.scale_dropdown.set(current_label)
+        self.scale_dropdown.pack(side="left")
+
+    def _on_theme_toggle(self):
+        """Switch between light and dark mode."""
+        mode = self.theme_toggle.get()
+        ctk.set_appearance_mode(mode)
+        self._appearance_mode = mode
+        self._save_appearance_mode(mode)
+
+    def _load_appearance_mode(self):
+        """Load saved appearance mode, default dark."""
+        try:
+            if os.path.exists(self.UI_SETTINGS_PATH):
+                with open(self.UI_SETTINGS_PATH, encoding="utf-8") as f:
+                    data = json.load(f)
+                return data.get("appearance_mode", "light")
+        except Exception:
+            pass
+        return "light"
+
+    def _save_appearance_mode(self, mode):
+        """Persist appearance mode."""
+        try:
+            data = {}
+            if os.path.exists(self.UI_SETTINGS_PATH):
+                with open(self.UI_SETTINGS_PATH, encoding="utf-8") as f:
+                    data = json.load(f)
+            data["appearance_mode"] = mode
+            os.makedirs(os.path.dirname(self.UI_SETTINGS_PATH), exist_ok=True)
+            with open(self.UI_SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
+
+    def _on_scale_change(self, value):
+        """Apply new UI scale and save preference."""
+        scale = self.SCALE_OPTIONS.get(value, 1.1)
+        ctk.set_widget_scaling(scale)
+        self._save_ui_scale(scale)
+
+    def _load_ui_scale(self):
+        """Load saved UI scale from config, default 1.1."""
+        try:
+            if os.path.exists(self.UI_SETTINGS_PATH):
+                with open(self.UI_SETTINGS_PATH, encoding="utf-8") as f:
+                    data = json.load(f)
+                return float(data.get("ui_scale", 1.1))
+        except Exception:
+            pass
+        return 1.1
+
+    def _save_ui_scale(self, scale):
+        """Persist UI scale to config/ui_settings.json."""
+        try:
+            data = {}
+            if os.path.exists(self.UI_SETTINGS_PATH):
+                with open(self.UI_SETTINGS_PATH, encoding="utf-8") as f:
+                    data = json.load(f)
+            data["ui_scale"] = scale
+            os.makedirs(os.path.dirname(self.UI_SETTINGS_PATH), exist_ok=True)
+            with open(self.UI_SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"Could not save UI scale: {e}")
 
     # ===== EVENT HANDLERS =====
 
@@ -863,7 +1083,7 @@ class GifMakeApp(ctk.CTk):
             # Create item frame
             item_frame = ctk.CTkFrame(
                 self.video_list_scroll,
-                fg_color=("#FFFFFF", "#363654") if i % 2 == 0 else ("#F0F0F0", "#2D2D45"),
+                fg_color=("#FFFFFF", "#243040") if i % 2 == 0 else ("#F0F0F0", "#1A2535"),
                 corner_radius=5,
                 height=35
             )
@@ -885,8 +1105,8 @@ class GifMakeApp(ctk.CTk):
             dur_label = ctk.CTkLabel(
                 item_frame,
                 text=duration_str,
-                font=ctk.CTkFont(size=10),
-                text_color=("#666666", "#AAAAAA"),
+                font=ctk.CTkFont(size=11),
+                text_color=("#333333", "#CBD5E1"),
                 width=50
             )
             dur_label.grid(row=0, column=1, sticky="e", padx=5, pady=5)
@@ -895,7 +1115,7 @@ class GifMakeApp(ctk.CTk):
             gifs_label = ctk.CTkLabel(
                 item_frame,
                 text=f"~{estimated_gifs} GIFs",
-                font=ctk.CTkFont(size=10),
+                font=ctk.CTkFont(size=11),
                 text_color=("#1E88E5", "#5DADE2"),
                 width=60
             )
@@ -997,11 +1217,19 @@ class GifMakeApp(ctk.CTk):
         if value == "Video Clips":
             self.generate_btn.configure(text="Generate Clips")
             self.duration_setting_label.configure(text="Clip Duration:")
-            self.preserve_quality_checkbox.grid()  # Show preserve quality option
+            self.preserve_quality_checkbox.grid()
+            # Default to lossless for clips — no downscaling
+            self.preserve_quality_checkbox.select()
+            self.resolution_dropdown.set("Original")
+            self.fps_dropdown.set("60")
         else:
             self.generate_btn.configure(text="Generate GIFs")
             self.duration_setting_label.configure(text="GIF Duration:")
-            self.preserve_quality_checkbox.grid_remove()  # Hide preserve quality option
+            self.preserve_quality_checkbox.grid_remove()
+            self.preserve_quality_checkbox.deselect()
+            # GIFs need lower settings to keep file size manageable
+            self.resolution_dropdown.set("480p")
+            self.fps_dropdown.set("15")
 
     def on_upload_toggle(self):
         """Handle upload checkbox toggle."""
@@ -1056,6 +1284,89 @@ class GifMakeApp(ctk.CTk):
             else:
                 self.audio_checkbox.deselect()
             self.selected_account = account
+
+    # --- Browser profile (AdsPower) management ---
+
+    _ADSPOWER_CONFIG = os.path.join(
+        os.path.dirname(__file__), "..", "uploaders", "redgifs", "adspower_config.json"
+    )
+
+    def _load_browser_profiles(self):
+        """Load AdsPower browser profiles into dropdown."""
+        try:
+            if os.path.exists(self._ADSPOWER_CONFIG):
+                with open(self._ADSPOWER_CONFIG, encoding="utf-8") as f:
+                    self._adspower_cfg = json.load(f)
+            else:
+                self._adspower_cfg = {"profiles": []}
+            profiles = self._adspower_cfg.get("profiles", [])
+            if profiles:
+                options = [f"{p.get('account_name', '?')} ({p.get('profile_id', '?')})"
+                           for p in profiles]
+                self.browser_profile_dropdown.configure(values=options)
+                self.browser_profile_var.set(options[0])
+            else:
+                self.browser_profile_dropdown.configure(values=["No profiles"])
+                self.browser_profile_var.set("No profiles")
+        except Exception as e:
+            print(f"Failed to load browser profiles: {e}")
+            self.browser_profile_dropdown.configure(values=["Error"])
+            self.browser_profile_var.set("Error")
+
+    def _save_adspower_config(self):
+        """Persist AdsPower config to disk."""
+        with open(self._ADSPOWER_CONFIG, "w", encoding="utf-8") as f:
+            json.dump(self._adspower_cfg, f, indent=2)
+
+    def _add_browser_profile(self):
+        """Dialog to add a new AdsPower browser profile."""
+        dialog = ctk.CTkInputDialog(
+            text="Enter AdsPower Profile ID (e.g. k19mnl5p):",
+            title="Add Browser Profile")
+        profile_id = (dialog.get_input() or "").strip()
+        if not profile_id:
+            return
+
+        name_dialog = ctk.CTkInputDialog(
+            text="Account name for this profile (e.g. midnightmaemood):",
+            title="Account Name")
+        account_name = (name_dialog.get_input() or "").strip()
+        if not account_name:
+            return
+
+        profiles = self._adspower_cfg.get("profiles", [])
+        # Avoid duplicates
+        for p in profiles:
+            if p.get("profile_id") == profile_id:
+                messagebox.showinfo("Exists", f"Profile {profile_id} already exists.")
+                return
+
+        profiles.append({"profile_id": profile_id, "account_name": account_name})
+        self._adspower_cfg["profiles"] = profiles
+        self._save_adspower_config()
+        self._load_browser_profiles()
+
+    def _remove_browser_profile(self):
+        """Remove the currently selected browser profile."""
+        selected = self.browser_profile_var.get()
+        if not selected or selected in ("No profiles", "Error"):
+            return
+
+        if not messagebox.askyesno("Remove Profile",
+                                   f"Remove browser profile:\n{selected}?"):
+            return
+
+        # Parse profile_id from "name (id)" format
+        profile_id = ""
+        if "(" in selected and selected.endswith(")"):
+            profile_id = selected.rsplit("(", 1)[-1].rstrip(")").strip()
+
+        profiles = self._adspower_cfg.get("profiles", [])
+        self._adspower_cfg["profiles"] = [
+            p for p in profiles if p.get("profile_id") != profile_id
+        ]
+        self._save_adspower_config()
+        self._load_browser_profiles()
 
     def generate_gifs(self):
         """Start the GIF generation process."""
@@ -1128,6 +1439,11 @@ class GifMakeApp(ctk.CTk):
         try:
             from core.gif_generator import generate_gifs
 
+            # Put output in a subfolder named after the video
+            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            actual_output = os.path.join(output_folder, video_name)
+            os.makedirs(actual_output, exist_ok=True)
+
             # Define progress callback
             def progress_callback(current, total):
                 self.after(0, lambda: self._update_progress(current, total, output_format))
@@ -1135,7 +1451,7 @@ class GifMakeApp(ctk.CTk):
             # Generate GIFs or clips
             gif_paths = generate_gifs(
                 video_path=video_path,
-                output_folder=output_folder,
+                output_folder=actual_output,
                 gif_duration=gif_duration,
                 fps=fps,
                 resolution=resolution,
@@ -1145,7 +1461,7 @@ class GifMakeApp(ctk.CTk):
             )
 
             # Signal completion on main thread
-            self.after(0, lambda: self._on_complete(gif_paths, output_folder, output_format))
+            self.after(0, lambda: self._on_complete(gif_paths, actual_output, output_format))
 
         except ImportError as e:
             error_msg = f"Missing module: {e}\n\nPlease ensure the core.gif_generator module is implemented."
@@ -1234,6 +1550,9 @@ class GifMakeApp(ctk.CTk):
         format_singular = "Clip" if output_format == "mp4" else "GIF"
         btn_text = "Generate Clips" if output_format == "mp4" else "Generate GIFs"
 
+        # Add to Reddit campaign if checked
+        self._maybe_add_campaign(output_folder)
+
         # Check if upload is enabled
         if self.upload_enabled and UPLOAD_AVAILABLE and self.selected_account and gif_paths:
             self.status_label.configure(text=f"Status: Generated {count} {format_name}. Starting upload...")
@@ -1266,6 +1585,9 @@ class GifMakeApp(ctk.CTk):
         count = len(gif_paths) if gif_paths else 0
         format_name = "clips" if output_format == "mp4" else "GIFs"
         btn_text = "Generate Clips" if output_format == "mp4" else "Generate GIFs"
+
+        # Add to Reddit campaign if checked
+        self._maybe_add_campaign(output_folder)
 
         # Check if upload is enabled
         if self.upload_enabled and UPLOAD_AVAILABLE and self.selected_account and gif_paths:
@@ -1373,6 +1695,44 @@ class GifMakeApp(ctk.CTk):
 
         if result == "yes":
             self._open_folder(output_folder)
+
+    def _load_campaign_profiles(self):
+        """Populate the campaign profile dropdown from AdsPower config."""
+        try:
+            if os.path.exists(self._ADSPOWER_CONFIG):
+                with open(self._ADSPOWER_CONFIG, encoding="utf-8") as f:
+                    cfg = json.load(f)
+                profiles = cfg.get("profiles", [])
+                if profiles:
+                    options = [f"{p.get('account_name', '?')} ({p.get('profile_id', '?')})"
+                               for p in profiles]
+                    self.campaign_profile_dropdown.configure(values=options)
+                    self.campaign_profile_var.set(options[0])
+                    return
+        except Exception:
+            pass
+        self.campaign_profile_dropdown.configure(values=["No profiles"])
+        self.campaign_profile_var.set("No profiles")
+
+    def _maybe_add_campaign(self, output_folder):
+        """If 'Add to Reddit campaign' is checked, push folder to the Reddit Poster tab."""
+        if not AUTO_POSTER_AVAILABLE:
+            return
+        if not self.reddit_campaign_checkbox.get():
+            return
+        # Extract profile_id from "name (id)" dropdown selection
+        selected = self.campaign_profile_var.get()
+        profile_id = None
+        if "(" in selected and selected.endswith(")"):
+            profile_id = selected.rsplit("(", 1)[-1].rstrip(")").strip()
+        try:
+            added = self.auto_poster.add_campaign_from_folder(
+                output_folder, preferred_profile_id=profile_id
+            )
+            if added:
+                self.tabview.set("Reddit")
+        except Exception as e:
+            print(f"[campaign bridge] Could not add campaign: {e}")
 
     def _open_folder(self, folder_path):
         """Open the specified folder in the system file explorer."""

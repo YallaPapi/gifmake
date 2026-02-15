@@ -18,6 +18,17 @@ from datetime import datetime
 
 
 @dataclass
+class PersonaInterests:
+    """General interests, hobbies, and personality for realistic warmup activity."""
+    location: str = ""                # city/state e.g. "Charlotte, NC"
+    hobbies: List[str] = field(default_factory=list)     # cooking, yoga, hiking, gaming...
+    interests: List[str] = field(default_factory=list)   # fashion, travel, music, true_crime...
+    personality_traits: List[str] = field(default_factory=list)  # bubbly, sarcastic, chill...
+    favorite_subs: List[str] = field(default_factory=list)  # explicit SFW subs to browse
+    comment_style: str = "casual"     # casual, enthusiastic, minimal
+
+
+@dataclass
 class AccountAttributes:
     """Physical attributes of an account persona."""
     age: int
@@ -79,11 +90,15 @@ class AccountProfile:
     profile_id: str
     display_name: str
     attributes: AccountAttributes
+    adspower_id: str = ""
+    persona: PersonaInterests = field(default_factory=PersonaInterests)
     title_templates: Dict[str, str] = field(default_factory=lambda: {"default": "{title}"})
     flair_mappings: Dict[str, Optional[str]] = field(default_factory=dict)
     content_tags: List[str] = field(default_factory=list)
     reddit_account: RedditAccount = field(default_factory=lambda: RedditAccount(username=""))
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    creator: str = ""  # Content bank folder name (e.g., "creator_mae")
+    proxy_group: str = ""  # Proxy group name (e.g., "proxy_1")
 
     def get_title(self, base_title: str, template_name: str = "default") -> str:
         """
@@ -227,28 +242,37 @@ class ProfileManager:
 
     def _dict_to_profile(self, data: Dict[str, Any]) -> AccountProfile:
         """Convert dictionary to AccountProfile object."""
+        persona_data = data.get("persona", {})
         return AccountProfile(
             profile_id=data["profile_id"],
+            adspower_id=data.get("adspower_id", ""),
             display_name=data["display_name"],
             attributes=AccountAttributes(**data.get("attributes", {})),
+            persona=PersonaInterests(**persona_data) if persona_data else PersonaInterests(),
             title_templates=data.get("title_templates", {"default": "{title}"}),
             flair_mappings=data.get("flair_mappings", {}),
             content_tags=data.get("content_tags", []),
             reddit_account=RedditAccount(**data.get("reddit_account", {"username": ""})),
-            created_at=data.get("created_at", datetime.now().isoformat())
+            created_at=data.get("created_at", datetime.now().isoformat()),
+            creator=data.get("creator", ""),
+            proxy_group=data.get("proxy_group", ""),
         )
 
     def _profile_to_dict(self, profile: AccountProfile) -> Dict[str, Any]:
         """Convert AccountProfile to dictionary for JSON serialization."""
         return {
             "profile_id": profile.profile_id,
+            "adspower_id": profile.adspower_id,
             "display_name": profile.display_name,
             "attributes": asdict(profile.attributes),
+            "persona": asdict(profile.persona),
             "title_templates": profile.title_templates,
             "flair_mappings": profile.flair_mappings,
             "content_tags": profile.content_tags,
             "reddit_account": asdict(profile.reddit_account),
-            "created_at": profile.created_at
+            "created_at": profile.created_at,
+            "creator": profile.creator,
+            "proxy_group": profile.proxy_group,
         }
 
     def save(self):

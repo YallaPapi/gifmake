@@ -126,7 +126,17 @@ class Humanizer:
             # Fallback to regular click
             self.page.click(selector)
 
-    def wait_between_posts(self):
+    def _sleep_interruptible(self, duration, stop_checker=None):
+        """Sleep in short chunks so callers can interrupt long waits."""
+        end = time.time() + max(0.0, float(duration))
+        while time.time() < end:
+            if stop_checker and stop_checker():
+                logger.info("Wait interrupted by stop request")
+                return False
+            time.sleep(min(0.5, max(0.0, end - time.time())))
+        return True
+
+    def wait_between_posts(self, stop_checker=None):
         """Wait between posts with cadence variation."""
         self._posts_this_session += 1
         self._posts_since_break += 1
@@ -143,10 +153,11 @@ class Humanizer:
         if self._posts_since_break >= self.break_every:
             duration = random.randint(self.break_min, self.break_max)
             logger.info(f"Taking a {duration}s break after {self._posts_since_break} posts")
-            time.sleep(duration)
+            if not self._sleep_interruptible(duration, stop_checker=stop_checker):
+                return False
             self._posts_since_break = 0
             self.break_every = random.randint(5, 8)
-            return
+            return True
 
         # Cadence-based delay (scaled to configured range)
         if self._cadence_mode == "bursty":
@@ -157,7 +168,7 @@ class Humanizer:
             delay = random.uniform(self.min_delay, self.max_delay)
 
         logger.info(f"Waiting {delay:.0f}s before next post ({self._cadence_mode} mode)")
-        time.sleep(delay)
+        return self._sleep_interruptible(delay, stop_checker=stop_checker)
 
     def should_stop_for_day(self, posts_today):
         """Check if daily post limit is reached."""
