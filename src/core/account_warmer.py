@@ -583,6 +583,32 @@ class AccountWarmer:
             "ts": datetime.datetime.now().strftime("%H:%M:%S"),
         })
 
+    def _screenshot_error(self, context, detail=""):
+        """Save a screenshot on any failure for later analysis.
+
+        Saves to data/error_screenshots/<date>/<username>_<context>_<time>.png
+        Also logs the screenshot path + page URL for traceability.
+        """
+        import datetime
+        try:
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            date_dir = datetime.datetime.now().strftime("%Y-%m-%d")
+            base = os.path.join("data", "error_screenshots", date_dir)
+            os.makedirs(base, exist_ok=True)
+            username = getattr(self, 'username', 'unknown')
+            # Sanitize context for filename
+            safe_ctx = "".join(c if c.isalnum() or c in "-_" else "_" for c in context)[:50]
+            filename = f"{username}_{safe_ctx}_{ts}.png"
+            filepath = os.path.join(base, filename)
+            self.page.screenshot(path=filepath, timeout=5000)
+            page_url = self.page.url
+            logger.info(f"  ERROR SCREENSHOT: {filepath} (url={page_url})")
+            # Log to action_log for the report
+            self._log_action("error_screenshot", url=page_url,
+                             text=f"{context}: {detail}"[:200], status="error")
+        except Exception as e:
+            logger.debug(f"  Screenshot capture failed: {e}")
+
     # â"€â"€ Main entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def run_daily_warmup(self, target_subs=None, session_minutes=None,
@@ -701,9 +727,11 @@ class AccountWarmer:
                 logger.info(f"Feed {candidate}: only {post_count} posts, trying next")
             except Exception as e:
                 logger.info(f"Feed {candidate} failed: {e}")
+                self._screenshot_error("feed_load_failed", f"{candidate}: {e}"[:150])
 
         if not feed_url:
             logger.warning("No feed URL produced posts, aborting session")
+            self._screenshot_error("no_feed_loaded", "all feed candidates failed")
             return
 
         self._feed_url = feed_url  # Store for recovery in _explore_post
@@ -795,6 +823,7 @@ class AccountWarmer:
 
             except Exception as e:
                 logger.info(f"Scroll loop error: {e}")
+                self._screenshot_error("scroll_loop_exception", str(e)[:150])
                 # Try to recover by going back to feed
                 try:
                     self.page.goto(feed_url, timeout=15000,
@@ -877,11 +906,13 @@ class AccountWarmer:
                 self._wait_for_timeout(random.randint(200, 600))
             else:
                 logger.info(f"  Feed vote: could not click {btn_text} on post {idx}")
+                self._screenshot_error("feed_vote_no_btn", f"post #{idx} btn={btn_text}")
 
         except Exception as e:
             logger.info(f"  Feed vote error: {e}")
+            self._screenshot_error("feed_vote_exception", str(e)[:150])
 
-    # â”€â”€ Post exploration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â"€â"€ Post exploration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _explore_post(self):
         """Click into a post, read it, maybe interact, go back.
@@ -937,6 +968,7 @@ class AccountWarmer:
             )
             if not clicked:
                 logger.info(f"  Explore: JS click failed on post link {idx}")
+                self._screenshot_error("explore_click_failed", f"post link #{idx}")
                 return
 
             self.stats["posts_clicked"] += 1
@@ -997,6 +1029,7 @@ class AccountWarmer:
 
         except Exception as e:
             logger.info(f"  Explore post error: {e}")
+            self._screenshot_error("explore_exception", str(e)[:150])
             try:
                 # Navigate to feed URL instead of go_back() â€” if the click
                 # failed, go_back() would leave the feed, not return to it.
@@ -1044,10 +1077,12 @@ class AccountWarmer:
                 self._wait_for_timeout(random.randint(200, 800))
             else:
                 logger.info(f"  Post vote: {btn_text} button not found in shadow DOM")
+                self._screenshot_error("post_vote_no_btn", f"btn={btn_text}")
         except Exception as e:
             logger.info(f"  Post vote error: {e}")
+            self._screenshot_error("post_vote_exception", str(e)[:150])
 
-    # â”€â”€ Comment interaction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â"€â"€ Comment interaction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _interact_with_comment(self, post_title, sub_name, skip_reply=False):
         """Vote on a visible comment, maybe reply to it.
@@ -1125,6 +1160,7 @@ class AccountWarmer:
 
         except Exception as e:
             logger.info(f"  Comment interaction error: {e}")
+            self._screenshot_error("comment_interact_exception", str(e)[:150])
 
     # Topics where commenting is too risky (factual errors, insensitivity)
     _SKIP_TOPICS = [
@@ -1289,6 +1325,7 @@ class AccountWarmer:
 
         except Exception as e:
             logger.info(f"  Sub browse error: {e}")
+            self._screenshot_error("sub_browse_exception", str(e)[:150])
             try:
                 self.page.goto(self._feed_url, timeout=15000,
                                wait_until="domcontentloaded")
@@ -1296,7 +1333,7 @@ class AccountWarmer:
             except Exception:
                 pass
 
-    # â”€â”€ Grok comment generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â"€â"€ Grok comment generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _generate_comment(self, post_title, sub_name, sentiment,
                           reply_to=None):
@@ -1612,6 +1649,7 @@ class AccountWarmer:
             # Step 1: Activate the composer (it starts collapsed)
             if not self._activate_comment_composer():
                 logger.info("  Comment: no composer trigger found")
+                self._screenshot_error("comment_no_composer", "trigger not found")
                 return False
 
             # Step 2: Find the now-visible contenteditable
@@ -1620,6 +1658,7 @@ class AccountWarmer:
             )
             if comment_box.count() == 0:
                 logger.info("  Comment: composer activated but no editable found")
+                self._screenshot_error("comment_no_editable", "composer opened but no contenteditable")
                 return False
 
             # Use JS click to avoid viewport-scroll timeout from plugins
@@ -1650,6 +1689,7 @@ class AccountWarmer:
             }""")
             if not clicked:
                 logger.info("  Comment: no Comment submit button found")
+                self._screenshot_error("comment_no_submit_btn", "typed text but no submit button")
                 return False
 
             # Verify: wait and check composer closed
@@ -1669,6 +1709,7 @@ class AccountWarmer:
 
             if still_open:
                 logger.info("  Comment: clicked but composer still has text — may have failed")
+                self._screenshot_error("comment_submit_rejected", "submit clicked but composer still open")
                 self._comment_fail_streak += 1
                 self._maybe_enter_cooldown("comment")
                 return False
@@ -1688,6 +1729,7 @@ class AccountWarmer:
 
         except Exception as e:
             logger.info(f"  Comment submit failed: {e}")
+            self._screenshot_error("comment_exception", str(e)[:150])
             self._comment_fail_streak += 1
             self._maybe_enter_cooldown("comment")
             self._log_action("comment", sub=self._get_current_sub(),
@@ -1721,6 +1763,7 @@ class AccountWarmer:
             )
             if not reply_clicked:
                 logger.info(f"  Reply: no Reply button on comment {comment_idx}")
+                self._screenshot_error("reply_no_btn", f"comment #{comment_idx}")
                 return False
 
             self._wait_for_timeout(random.randint(1000, 2000))
@@ -1767,6 +1810,7 @@ class AccountWarmer:
             }""", comment_idx)
             if not has_editable:
                 logger.info("  Reply: no editable found in comment subtree")
+                self._screenshot_error("reply_no_editable", f"comment #{comment_idx}")
                 return False
 
             self._wait_for_timeout(random.randint(300, 600))
@@ -1795,6 +1839,7 @@ class AccountWarmer:
             }""", comment_idx)
             if not submitted:
                 logger.info("  Reply: no Comment button in comment subtree")
+                self._screenshot_error("reply_no_submit_btn", f"comment #{comment_idx}")
                 return False
 
             # Verify: wait for composer to close (editable disappears from subtree)
@@ -1813,6 +1858,7 @@ class AccountWarmer:
 
             if still_open:
                 logger.info("  Reply: Comment clicked but composer still open — submit failed")
+                self._screenshot_error("reply_submit_rejected", f"comment #{comment_idx}")
                 self._comment_fail_streak += 1
                 self._maybe_enter_cooldown("reply")
                 return False
@@ -1832,6 +1878,7 @@ class AccountWarmer:
 
         except Exception as e:
             logger.info(f"  Reply submit failed: {e}")
+            self._screenshot_error("reply_exception", str(e)[:150])
             self._comment_fail_streak += 1
             self._maybe_enter_cooldown("reply")
             self._log_action("reply", sub=self._get_current_sub(),
