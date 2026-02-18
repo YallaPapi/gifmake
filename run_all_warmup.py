@@ -374,7 +374,7 @@ def warmup_one(account, ban_log, rotation_urls):
 
             return {"profile": profile_key, "status": "success",
                     "adspower_id": adspower_id, "proxy_group": grp,
-                    "stats": {k: v for k, v in stats.items() if k != "action_log"}}
+                    "stats": stats}
 
     except Exception as e:
         err_str = str(e).lower()
