@@ -36,97 +36,115 @@ GROK_URL = "https://api.x.ai/v1/chat/completions"
 # Lesson learned: midnight_mae banned after 43 comments + 91 votes in 4 days
 # on a brand-new account. New accounts need to lurk first.
 #
-# Phase 1 (days 1-7):   Lurker -- mostly read, rare votes, ~1-2 comments/day
-# Phase 2 (days 8-14):  Light -- some votes, 2-4 comments/day
-# Phase 3 (days 15-21): Regular -- normal activity, 4-7 comments/day
-# Phase 4 (days 22+):   Active -- full engagement
+# Phase 1 (days 1-3):   New -- browse, start commenting
+# Phase 2 (days 4-7):   Getting comfortable
+# Phase 3 (days 8-14):  Regular user
+# Phase 4 (days 15-21): Active user
+# Phase 5 (days 22+):   Established
 
 def _get_probs(day):
     """Action probabilities for current warmup day (phase-based).
 
-    Each phase has fixed probabilities -- no smooth curve that lets
-    day-1 accounts blast 20+ actions in a single session.
+    Each phase returns per-session randomized probabilities within a range
+    centered on the phase's target value. This prevents fingerprinting
+    from identical probability signatures across sessions.
 
-    Voting: 50/50 coin flip per day -- either 0 or 1 vote total.
-    Voting hurts CQS, commenting builds it.
-    Vote probs are small but nonzero so the 1 allowed vote can fire;
-    the daily cap (0 or 1) does the real gating via _vote_allowed().
+    Votes are disabled (0.0) -- comments build karma, votes don't.
     """
-    if day <= 7:
-        # Phase 1: Lurker -- read a lot, barely interact
-        return {
-            "vote_on_title": 0.0,                  # never vote from feed
-            "click_post": 0.15,                    # browse, but mostly read
-            "vote_on_post": 0.05,                  # cap gates to 0 or 1/day
-            "vote_on_comment": 0.0,                # don't vote on comments
-            "reply_to_voted_comment": 0.15,
-            "top_level_comment": 0.08,
-            "check_sub": 0.05,
-            "join_after_browse": 0.10,
-        }
-    elif day <= 14:
-        # Phase 2: Light participant -- starting to engage
+    if day <= 3:
+        # Phase 1: New but present -- browse, start commenting
         return {
             "vote_on_title": 0.0,
-            "click_post": 0.18,
-            "vote_on_post": 0.05,                  # cap gates to 0 or 1/day
+            "click_post": random.uniform(0.14, 0.22),
+            "vote_on_post": 0.0,
             "vote_on_comment": 0.0,
-            "reply_to_voted_comment": 0.30,
-            "top_level_comment": 0.15,
-            "check_sub": 0.07,
-            "join_after_browse": 0.20,
+            "reply_to_voted_comment": random.uniform(0.20, 0.30),
+            "top_level_comment": random.uniform(0.10, 0.20),
+            "check_sub": random.uniform(0.04, 0.08),
+            "join_after_browse": random.uniform(0.10, 0.20),
         }
-    elif day <= 21:
+    elif day <= 7:
+        # Phase 2: Getting comfortable
+        return {
+            "vote_on_title": 0.0,
+            "click_post": random.uniform(0.16, 0.24),
+            "vote_on_post": 0.0,
+            "vote_on_comment": 0.0,
+            "reply_to_voted_comment": random.uniform(0.35, 0.45),
+            "top_level_comment": random.uniform(0.17, 0.27),
+            "check_sub": random.uniform(0.05, 0.09),
+            "join_after_browse": random.uniform(0.15, 0.25),
+        }
+    elif day <= 14:
         # Phase 3: Regular user
         return {
             "vote_on_title": 0.0,
-            "click_post": 0.20,
-            "vote_on_post": 0.05,                  # cap gates to 0 or 1/day
+            "click_post": random.uniform(0.18, 0.26),
+            "vote_on_post": 0.0,
             "vote_on_comment": 0.0,
-            "reply_to_voted_comment": 0.45,
-            "top_level_comment": 0.25,
-            "check_sub": 0.08,
-            "join_after_browse": 0.30,
+            "reply_to_voted_comment": random.uniform(0.45, 0.55),
+            "top_level_comment": random.uniform(0.25, 0.35),
+            "check_sub": random.uniform(0.06, 0.10),
+            "join_after_browse": random.uniform(0.20, 0.30),
         }
-    else:
-        # Phase 4: Active user (day 22+)
+    elif day <= 21:
+        # Phase 4: Active user
         return {
             "vote_on_title": 0.0,
-            "click_post": 0.22,
-            "vote_on_post": 0.05,                  # cap gates to 0 or 1/day
+            "click_post": random.uniform(0.20, 0.28),
+            "vote_on_post": 0.0,
             "vote_on_comment": 0.0,
-            "reply_to_voted_comment": 0.55,
-            "top_level_comment": 0.35,
-            "check_sub": 0.10,
-            "join_after_browse": 0.35,
+            "reply_to_voted_comment": random.uniform(0.50, 0.60),
+            "top_level_comment": random.uniform(0.30, 0.40),
+            "check_sub": random.uniform(0.08, 0.12),
+            "join_after_browse": random.uniform(0.30, 0.40),
+        }
+    else:
+        # Phase 5: Established user (day 22+)
+        return {
+            "vote_on_title": 0.0,
+            "click_post": random.uniform(0.22, 0.30),
+            "vote_on_post": 0.0,
+            "vote_on_comment": 0.0,
+            "reply_to_voted_comment": random.uniform(0.55, 0.65),
+            "top_level_comment": random.uniform(0.33, 0.43),
+            "check_sub": random.uniform(0.09, 0.13),
+            "join_after_browse": random.uniform(0.33, 0.43),
         }
 
 
-# Hard daily caps per phase
-# Votes: 50/50 coin flip (0 or 1) -- randomized fresh each day in _get_daily_caps
-DAILY_CAPS = {
-    "phase1": {"comments": 2, "joins": 2},      # days 1-7
-    "phase2": {"comments": 5, "joins": 3},      # days 8-14
-    "phase3": {"comments": 8, "joins": 3},      # days 15-21
-    "phase4": {"comments": 15, "joins": 4},     # days 22+
+# Per-run caps per phase (the continuous loop handles multiple runs/day)
+# Target: ~1,200+ karma by week 4 at ~3 karma/comment avg.
+PER_RUN_CAP_RANGES = {
+    "phase1": {"comments": (2, 3),  "joins": (0, 1)},     # days 1-3
+    "phase2": {"comments": (2, 4),  "joins": (1, 2)},     # days 4-7
+    "phase3": {"comments": (2, 5),  "joins": (1, 2)},     # days 8-14
+    "phase4": {"comments": (3, 5),  "joins": (1, 2)},     # days 15-21
+    "phase5": {"comments": (3, 5),  "joins": (1, 2)},     # days 22+
 }
 
 
-def _get_daily_caps(day):
-    """Return hard daily caps for the current phase.
+def _get_run_caps(day):
+    """Return randomized per-run caps for the current phase.
 
-    Votes: 50/50 coin flip -- 0 or 1 total votes per day.
+    No votes -- comments build karma, votes don't.
+    Each run gets a fresh random value within the phase range.
     """
-    if day <= 7:
-        caps = dict(DAILY_CAPS["phase1"])
+    if day <= 3:
+        ranges = PER_RUN_CAP_RANGES["phase1"]
+    elif day <= 7:
+        ranges = PER_RUN_CAP_RANGES["phase2"]
     elif day <= 14:
-        caps = dict(DAILY_CAPS["phase2"])
+        ranges = PER_RUN_CAP_RANGES["phase3"]
     elif day <= 21:
-        caps = dict(DAILY_CAPS["phase3"])
+        ranges = PER_RUN_CAP_RANGES["phase4"]
     else:
-        caps = dict(DAILY_CAPS["phase4"])
-    caps["votes"] = random.choice([0, 1])
-    return caps
+        ranges = PER_RUN_CAP_RANGES["phase5"]
+    return {
+        "comments": random.randint(*ranges["comments"]),
+        "joins": random.randint(*ranges["joins"]),
+        "votes": 0,
+    }
 
 
 def _day_progress(day):
@@ -136,33 +154,36 @@ def _day_progress(day):
 
 
 def _get_session_plan(day):
-    """Scale sessions and session length by phase.
+    """Scale session length by phase. Always exactly 1 session per run.
 
-    Phase 1 (days 1-7):  1 session, 8-12 min (short lurk)
-    Phase 2 (days 8-14): 1-2 sessions, 10-18 min
-    Phase 3 (days 15-21): 1-2 sessions, 12-22 min
-    Phase 4 (days 22+): 2-3 sessions, 15-30 min
+    The continuous loop handles multiple runs per day.
+
+    Phase 1 (days 1-3):   1 session, 10-20 min
+    Phase 2 (days 4-7):   1 session, 12-22 min
+    Phase 3 (days 8-14):  1 session, 15-25 min
+    Phase 4 (days 15-21): 1 session, 18-28 min
+    Phase 5 (days 22+):   1 session, 20-30 min
     """
-    if day <= 7:
-        min_sessions, max_sessions = 1, 1
-        min_session_sec = 8 * 60    # 8 min
-        max_session_sec = 12 * 60   # 12 min
-    elif day <= 14:
-        min_sessions, max_sessions = 1, 2
+    if day <= 3:
         min_session_sec = 10 * 60   # 10 min
-        max_session_sec = 18 * 60   # 18 min
-    elif day <= 21:
-        min_sessions, max_sessions = 1, 2
+        max_session_sec = 20 * 60   # 20 min
+    elif day <= 7:
         min_session_sec = 12 * 60   # 12 min
         max_session_sec = 22 * 60   # 22 min
-    else:
-        min_sessions, max_sessions = 2, 3
+    elif day <= 14:
         min_session_sec = 15 * 60   # 15 min
+        max_session_sec = 25 * 60   # 25 min
+    elif day <= 21:
+        min_session_sec = 18 * 60   # 18 min
+        max_session_sec = 28 * 60   # 28 min
+    else:
+        # Phase 5: day 22+
+        min_session_sec = 20 * 60   # 20 min
         max_session_sec = 30 * 60   # 30 min
 
     return {
-        "min_sessions": min_sessions,
-        "max_sessions": max_sessions,
+        "min_sessions": 1,
+        "max_sessions": 1,
         "min_session_sec": min_session_sec,
         "max_session_sec": max_session_sec,
     }
@@ -379,6 +400,19 @@ class AccountWarmer:
         """
         self.profile_id = profile_id
         self.page = page
+
+        # Auto-hide CupidBotOFM.ai browser plugin on every page load
+        try:
+            page.add_init_script("""
+                new MutationObserver((_, obs) => {
+                    const el = document.getElementById('wingman-preview');
+                    if (el) { el.style.display = 'none'; obs.disconnect(); }
+                }).observe(document.documentElement,
+                           {childList: true, subtree: true});
+            """)
+        except Exception:
+            pass
+
         self.persona = persona
         self.grok_api_key = grok_api_key or os.environ.get("GROK_API_KEY", "")
         db_day = init_warmup(profile_id)
@@ -400,14 +434,18 @@ class AccountWarmer:
         self._clicked_urls = set()
 
         # Top-comment hijack ratio (0.0 = always top-level, 1.0 = always hijack)
-        self.hijack_ratio = 0.4  # default: 40% hijack, 60% top-level
+        self.hijack_ratio = random.uniform(0.30, 0.50)  # randomized per session
         self._max_comments = 0   # 0 = unlimited (overridden by run_daily_warmup)
         self._comment_fail_streak = 0  # consecutive comment submit failures
         self._comment_cooldown_until = 0  # time.time() after which commenting resumes
 
-        # Phase-based daily caps
-        self._daily_caps = _get_daily_caps(self.day)
+        # Phase-based per-run caps
+        self._run_caps = _get_run_caps(self.day)
         self.min_nsfw_days = 14  # GUI can override this
+
+        # Sub rotation tracking (Change 8)
+        self._last_comment_sub = None
+        self._sub_comment_counts = {}
 
         # Session stats (reset per run_daily_warmup)
         self.stats = {
@@ -419,24 +457,47 @@ class AccountWarmer:
         # {type, sub, url, text, status, ts}
         self.action_log = []
 
-        phase = 1 if self.day <= 7 else 2 if self.day <= 14 else 3 if self.day <= 21 else 4
+        phase = (1 if self.day <= 3 else 2 if self.day <= 7
+                 else 3 if self.day <= 14 else 4 if self.day <= 21 else 5)
         logger.info(f"Warmer init: day {self.day} (phase {phase}), "
-                    f"caps: {self._daily_caps}, "
+                    f"caps: {self._run_caps}, "
                     f"{len(self.general_subs)} general subs, "
                     f"grok={'yes' if self.grok_api_key else 'no'}")
 
     def _vote_allowed(self):
         """Check if vote cap hasn't been reached."""
         total_votes = self.stats["upvotes"] + self.stats["downvotes"]
-        return total_votes < self._daily_caps["votes"]
+        return total_votes < self._run_caps["votes"]
 
     def _comment_allowed(self):
         """Check if comment cap hasn't been reached."""
-        return self.stats["comments"] < self._daily_caps["comments"]
+        return self.stats["comments"] < self._run_caps["comments"]
+
+    def _sub_comment_allowed(self, sub_name):
+        """Check sub rotation rules: no same-sub twice in a row, max 30% per sub."""
+        if not sub_name:
+            return True
+        # Rule 1: Never comment in the same sub as the last comment
+        if sub_name == self._last_comment_sub:
+            logger.info(f"  Sub rotation: skipping r/{sub_name} (same as last comment)")
+            return False
+        # Rule 2: No sub gets more than 30% of this run's comment cap
+        max_per_sub = max(1, int(self._run_caps["comments"] * 0.3 + 0.99))  # ceil
+        count = self._sub_comment_counts.get(sub_name, 0)
+        if count >= max_per_sub:
+            logger.info(f"  Sub rotation: skipping r/{sub_name} ({count}/{max_per_sub} cap)")
+            return False
+        return True
+
+    def _record_comment_sub(self, sub_name):
+        """Track which sub the last comment was in."""
+        if sub_name:
+            self._last_comment_sub = sub_name
+            self._sub_comment_counts[sub_name] = self._sub_comment_counts.get(sub_name, 0) + 1
 
     def _join_allowed(self):
         """Check if join cap hasn't been reached."""
-        return self.stats["joins"] < self._daily_caps["joins"]
+        return self.stats["joins"] < self._run_caps["joins"]
 
     def _all_caps_hit(self):
         """Check if all daily caps are exhausted (can end session early)."""
@@ -445,9 +506,10 @@ class AccountWarmer:
                 not self._join_allowed())
 
     def _maybe_enter_cooldown(self, action_type="comment"):
-        """After 3 consecutive comment/reply failures, enter a 5-minute cooldown."""
-        if self._comment_fail_streak >= 3:
-            cooldown_sec = 300  # 5 minutes
+        """After N consecutive comment/reply failures, enter a randomized cooldown."""
+        cooldown_threshold = random.randint(2, 4)
+        if self._comment_fail_streak >= cooldown_threshold:
+            cooldown_sec = random.randint(180, 420)
             self._comment_cooldown_until = time.time() + cooldown_sec
             logger.info(f"  {self._comment_fail_streak} consecutive {action_type} failures "
                         f"— comment cooldown for {cooldown_sec // 60} min (likely rate-limited)")
@@ -545,6 +607,9 @@ class AccountWarmer:
         }
         self.action_log = []
         self._max_comments = max_comments or 0  # 0 = unlimited
+        # Reset sub rotation tracking per run
+        self._last_comment_sub = None
+        self._sub_comment_counts = {}
 
         if session_minutes:
             # Manual override: single session of specified length
@@ -560,7 +625,7 @@ class AccountWarmer:
             # Auto mode: day-scaled sessions
             plan = _get_session_plan(self.day)
             num_sessions = random.randint(plan["min_sessions"], plan["max_sessions"])
-            caps = self._daily_caps
+            caps = self._run_caps
             logger.info(
                 f"Day {self.day}: running {num_sessions} browse sessions "
                 f"(session {plan['min_session_sec']//60}-{plan['max_session_sec']//60} min, "
@@ -697,14 +762,15 @@ class AccountWarmer:
                                 continue
                         empty_feed_count = 0
                         if not recovered:
-                            logger.info("  All feeds empty, waiting 30s...")
-                            self._wait_for_timeout(30000)
+                            wait_ms = random.randint(20000, 40000)
+                            logger.info(f"  All feeds empty, waiting {wait_ms // 1000}s...")
+                            self._wait_for_timeout(wait_ms)
                     continue
                 else:
                     empty_feed_count = 0
 
                 # Mouse jitter (natural movement)
-                if random.random() < 0.15:
+                if random.random() < random.uniform(0.10, 0.20):
                     self._jitter_mouse()
 
                 # â”€â”€ Vote on a post title (without clicking in) â”€â”€â”€â”€â”€â”€â”€â”€
@@ -897,14 +963,17 @@ class AccountWarmer:
             # Check if we're in comment cooldown
             in_cooldown = time.time() < self._comment_cooldown_until
 
+            # Sub rotation: check if commenting is allowed in this sub
+            sub_ok = self._sub_comment_allowed(current_sub)
+
             # -- Maybe vote on a comment (and maybe reply) --
             if self._vote_allowed() and random.random() < self.probs["vote_on_comment"]:
-                skip_reply = in_cooldown or not self._comment_allowed()
+                skip_reply = in_cooldown or not self._comment_allowed() or not sub_ok
                 self._interact_with_comment(post_title, current_sub,
                                             skip_reply=skip_reply)
 
             # -- Maybe leave a top-level comment (check cap + cooldown) --
-            elif (not in_cooldown and self._comment_allowed()
+            elif (not in_cooldown and self._comment_allowed() and sub_ok
                   and random.random() < self.probs["top_level_comment"]):
                 self._leave_top_comment(post_title, current_sub)
 
@@ -1151,7 +1220,7 @@ class AccountWarmer:
                 self._wait_for_timeout(random.randint(1500, 3000))
 
             # Maybe click into a hot post (random from top 8)
-            if random.random() < 0.4:
+            if random.random() < random.uniform(0.30, 0.50):
                 posts = self.page.locator('a[slot="full-post-link"]')
                 post_count = posts.count()
                 if post_count > 2:
@@ -1173,14 +1242,14 @@ class AccountWarmer:
                         self._wait_for_timeout(random.randint(1500, 3000))
 
                     # Maybe vote on it
-                    if random.random() < 0.3:
+                    if random.random() < random.uniform(0.20, 0.40):
                         self._vote_on_current_post()
 
                     self.page.go_back()
                     self._wait_for_timeout(random.randint(1500, 3000))
 
             # Maybe sort by Top All Time (very natural new-sub behavior)
-            if random.random() < 0.25:
+            if random.random() < random.uniform(0.15, 0.35):
                 try:
                     self.page.goto(
                         f"https://www.reddit.com/r/{sub_name}/top/?t=all",
@@ -1220,7 +1289,7 @@ class AccountWarmer:
             try:
                 self.page.goto(self._feed_url, timeout=15000,
                                wait_until="domcontentloaded")
-                self._wait_for_timeout(1500)
+                self._wait_for_timeout(random.randint(1000, 2500))
             except Exception:
                 pass
 
@@ -1546,13 +1615,14 @@ class AccountWarmer:
                 logger.info("  Comment: composer activated but no editable found")
                 return False
 
-            comment_box.first.click()
+            # Use JS click to avoid viewport-scroll timeout from plugins
+            comment_box.first.evaluate("el => el.click()")
             self._wait_for_timeout(random.randint(400, 800))
 
             # Step 3: Type with human-like timing
             for char in comment:
                 self.page.keyboard.type(char, delay=random.randint(30, 120))
-                if random.random() < 0.04:
+                if random.random() < random.uniform(0.02, 0.07):
                     self._wait_for_timeout(random.randint(150, 500))
 
             self._wait_for_timeout(random.randint(500, 1200))
@@ -1576,7 +1646,7 @@ class AccountWarmer:
                 return False
 
             # Verify: wait and check composer closed
-            self._wait_for_timeout(3000)
+            self._wait_for_timeout(random.randint(2000, 4500))
             still_open = self.page.evaluate("""() => {
                 // Check if the top-level composer still has content
                 const eds = document.querySelectorAll(
@@ -1598,9 +1668,11 @@ class AccountWarmer:
 
             self._comment_fail_streak = 0
             self.stats["comments"] += 1
+            comment_sub = self._get_current_sub()
+            self._record_comment_sub(comment_sub)
             logger.info(f"  Comment VERIFIED (total: {self.stats['comments']}): "
                        f"'{comment[:60]}'")
-            self._log_action("comment", sub=self._get_current_sub(),
+            self._log_action("comment", sub=comment_sub,
                              url=self.page.url, text=comment, status="verified")
             self._wait_for_timeout(random.randint(1000, 2000))
             return True
@@ -1692,7 +1764,7 @@ class AccountWarmer:
 
             for char in reply_text:
                 self.page.keyboard.type(char, delay=random.randint(30, 120))
-                if random.random() < 0.04:
+                if random.random() < random.uniform(0.02, 0.07):
                     self._wait_for_timeout(random.randint(150, 500))
 
             self._wait_for_timeout(random.randint(500, 1200))
@@ -1717,7 +1789,7 @@ class AccountWarmer:
                 return False
 
             # Verify: wait for composer to close (editable disappears from subtree)
-            self._wait_for_timeout(3000)
+            self._wait_for_timeout(random.randint(2000, 4500))
             still_open = self.page.evaluate("""(idx) => {
                 const comments = document.querySelectorAll('shreddit-comment');
                 if (idx >= comments.length) return false;
@@ -1738,9 +1810,11 @@ class AccountWarmer:
 
             self._comment_fail_streak = 0
             self.stats["comments"] += 1
+            reply_sub = self._get_current_sub()
+            self._record_comment_sub(reply_sub)
             logger.info(f"  Reply VERIFIED (total: {self.stats['comments']}): "
                        f"'{reply_text[:60]}'")
-            self._log_action("reply", sub=self._get_current_sub(),
+            self._log_action("reply", sub=reply_sub,
                              url=self.page.url, text=reply_text, status="verified")
             self._wait_for_timeout(random.randint(1000, 2000))
             return True
@@ -1871,13 +1945,24 @@ class AccountWarmer:
         Returns a list with one base64 PNG — a screenshot of the
         shreddit-post element which contains the image, title, etc.
         Videos are skipped (handled via text context + hijack).
+
+        Uses a 5s timeout to avoid hanging when browser plugins
+        interfere with element visibility. Falls back to page
+        screenshot if the element screenshot fails.
         """
         frames = []
         try:
             post_el = self.page.query_selector('shreddit-post')
             if not post_el:
                 return frames
-            shot = post_el.screenshot()
+            try:
+                shot = post_el.screenshot(timeout=5000)
+            except Exception:
+                # Element not visible — fall back to viewport screenshot
+                try:
+                    shot = self.page.screenshot(timeout=5000)
+                except Exception:
+                    return frames
             if len(shot) > 1000:
                 frames.append(base64.b64encode(shot).decode())
         except Exception as e:
@@ -1999,222 +2084,4 @@ class AccountWarmer:
         except Exception:
             pass
 
-    # -- CQS Checker ----------------------------------------------------------
-
-    def check_cqs(self):
-        """Post to r/whatismycqs, read automod reply, delete post, return CQS.
-
-        Flow:
-          1. Navigate to r/whatismycqs/submit
-          2. Create text post with title "what is my cqs"
-          3. Wait for automod reply (up to 30s)
-          4. Parse CQS value from reply
-          5. Delete the post
-          6. Save to DB and return the value
-        """
-        import re
-        from uploaders.reddit.reddit_poster_playwright import dismiss_over18
-        from core.post_history import record_cqs
-
-        logger.info("CQS check: starting...")
-        cqs_value = None
-        raw_response = ""
-        post_url = None
-
-        try:
-            # 1. Navigate to submit page (text post)
-            submit_url = "https://www.reddit.com/r/whatismycqs/submit?type=text"
-            self.page.goto(submit_url, timeout=30000,
-                           wait_until="domcontentloaded")
-            self._wait_for_timeout(random.randint(2000, 4000))
-            dismiss_over18(self.page)
-
-            # 2. Fill title
-            title_filled = False
-            for selector in ['textarea[name="title"]',
-                             '[data-testid="post-title-input"]',
-                             'textarea[placeholder*="title" i]']:
-                try:
-                    if self.page.locator(selector).count() > 0:
-                        self.page.fill(selector, "what is my cqs")
-                        title_filled = True
-                        break
-                except Exception:
-                    continue
-
-            if not title_filled:
-                logger.warning("CQS check: could not find title input")
-                return None
-
-            self._wait_for_timeout(1500)
-
-            # 3. Submit
-            submitted = False
-            for selector in ['#submit-post-button',
-                             'r-post-form-submit-button[post-action-type="submit"]',
-                             'button[type="submit"]:has-text("Post")',
-                             'button:has-text("Post")']:
-                try:
-                    btn = self.page.locator(selector)
-                    if btn.count() > 0:
-                        btn.first.click()
-                        submitted = True
-                        break
-                except Exception:
-                    continue
-
-            if not submitted:
-                # JS fallback
-                try:
-                    self.page.evaluate("""() => {
-                        let el = document.getElementById('submit-post-button');
-                        if (el) { el.click(); return true; }
-                        return false;
-                    }""")
-                    submitted = True
-                except Exception:
-                    pass
-
-            if not submitted:
-                logger.warning("CQS check: could not click submit")
-                return None
-
-            # 4. Wait for post creation + automod reply
-            self._wait_for_timeout(8000)
-            current_url = self.page.url
-            if "/comments/" not in current_url:
-                logger.warning(f"CQS check: post may not have been created. URL: {current_url}")
-                return None
-
-            post_url = current_url
-            logger.info(f"CQS check: post created at {post_url}")
-
-            # Poll for automod reply (every 3s, up to 30s)
-            automod_text = None
-            for _ in range(10):
-                self._wait_for_timeout(3000)
-                try:
-                    automod_text = self.page.evaluate("""() => {
-                        const comments = document.querySelectorAll('shreddit-comment');
-                        for (const c of comments) {
-                            const author = c.getAttribute('author') || '';
-                            if (author.toLowerCase() === 'automoderator') {
-                                const sr = c.shadowRoot;
-                                if (sr) {
-                                    const content = sr.querySelector('[slot="comment"]')
-                                                  || sr.querySelector('.md')
-                                                  || sr;
-                                    return content.textContent || '';
-                                }
-                                return c.textContent || '';
-                            }
-                        }
-                        // Fallback: scan page text
-                        const m = document.body.innerText.match(
-                            /(?:cqs|comment quality score|contributor quality)[^\\d]*(\\d+)/i
-                        );
-                        return m ? m[0] : null;
-                    }""")
-                except Exception:
-                    automod_text = None
-                if automod_text:
-                    break
-
-            if automod_text:
-                raw_response = automod_text.strip()
-                logger.info(f"CQS check: automod replied: {raw_response[:200]}")
-
-                # Parse CQS value
-                match = re.search(r'(?:cqs|score)[^\d]*(\d+)', raw_response, re.IGNORECASE)
-                if match:
-                    cqs_value = match.group(1)
-                else:
-                    match = re.search(r'(\d+)', raw_response)
-                    if match:
-                        cqs_value = match.group(1)
-                    else:
-                        cqs_value = raw_response[:100]
-
-                logger.info(f"CQS check: parsed value = {cqs_value}")
-            else:
-                logger.warning("CQS check: no automod reply after 30s")
-                raw_response = "(no reply)"
-
-            # 5. Delete the post
-            if post_url:
-                self._delete_cqs_post()
-
-            # 6. Save to DB
-            record_cqs(self.profile_id, cqs_value, raw_response)
-            logger.info(f"CQS check complete: {cqs_value}")
-            return cqs_value
-
-        except Exception as e:
-            logger.warning(f"CQS check failed: {e}")
-            if post_url:
-                try:
-                    self._delete_cqs_post()
-                except Exception:
-                    pass
-            return None
-
-    def _delete_cqs_post(self):
-        """Delete the current post via the overflow menu."""
-        try:
-            # Open overflow menu on the post
-            menu_result = self.page.evaluate("""() => {
-                const post = document.querySelector('shreddit-post');
-                if (!post) return 'no-post';
-                const sr = post.shadowRoot;
-                if (!sr) return 'no-sr';
-                // Overflow menu button (three dots)
-                const btn = sr.querySelector('shreddit-post-overflow-menu')
-                         || sr.querySelector('button[aria-label*="more" i]');
-                if (btn) { btn.click(); return 'opened'; }
-                return 'no-btn';
-            }""")
-            logger.info(f"  CQS delete: menu={menu_result}")
-            if menu_result != 'opened':
-                return False
-
-            self._wait_for_timeout(1500)
-
-            # Click Delete in dropdown
-            del_result = self.page.evaluate("""() => {
-                const items = document.querySelectorAll(
-                    '[role="menuitem"], li, button, shreddit-overflow-menu-item'
-                );
-                for (const el of items) {
-                    if ((el.textContent || '').toLowerCase().includes('delete')) {
-                        el.click();
-                        return 'clicked';
-                    }
-                }
-                return 'not-found';
-            }""")
-            logger.info(f"  CQS delete: delete={del_result}")
-            if del_result != 'clicked':
-                return False
-
-            self._wait_for_timeout(1500)
-
-            # Confirm dialog
-            confirm = self.page.evaluate("""() => {
-                const btns = document.querySelectorAll('button');
-                for (const b of btns) {
-                    const t = (b.textContent || '').trim().toLowerCase();
-                    if (t === 'delete' || t === 'yes' || t === 'confirm') {
-                        b.click();
-                        return 'confirmed';
-                    }
-                }
-                return 'no-confirm';
-            }""")
-            logger.info(f"  CQS delete: confirm={confirm}")
-            self._wait_for_timeout(2000)
-            return confirm == 'confirmed'
-
-        except Exception as e:
-            logger.warning(f"  CQS delete error: {e}")
-            return False
 

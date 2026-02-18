@@ -15,22 +15,125 @@ venv/
 test_gif_*.gif
 *.mp4
 
-# Sensitive files
+# Sensitive files — NEVER commit
 .env
 *.env
+config/api_keys.json
 
 # IDE
 .idea/
 .vscode/
 *.swp
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
 # OS
 .DS_Store
 Thumbs.db
 nul
 
-# Batch outputs
-batch/output/
+# Logs
+*.log
+logs/
 
-# Examples (user-generated)
+# Screenshots and images (not code)
+*.png
+*.jpg
+*.jpeg
+*.xlsx
+
+# Temp scripts
+tmp_*
+test_*
+!src/**/test_*
+
+# Scrape artifacts
+scrape_*.json
+scrape_*.txt
+scrape_*.py
+local_nsfw_*
+already_scraped.txt
+all_subreddits.txt
+
+# Data files (large, not code)
+*.csv
+subreddit_data_*.json
+subreddit_profiles.json
+subreddit_tiers.json
+subreddit_tiers_grok.json
+subreddit_flairs.json
+subreddit_full_data.json
+subreddit_analysis.json
+subreddit_categories.json
+subreddit_config.json
+test_classification_results.json
+test_classify_list.json
+tags.txt
+
+# Debug / test data
+debug_warmup/
+debug_screenshot.png
+testvids/
+data/
+*.db
+
+# Local UI settings
+config/ui_settings.json
+
+# One-off scripts
+categorize_subreddits.py
+classify_subreddits.py
+discover_local_nsfw.py
+scrape_v3.py
+scrape_watchdog.py
+scrape_error_handler.py
+scrape_progress_tracker.py
+run_scraper.py
+run_test_post.py
+run_three_posts.py
+run_dual_warmup.py
+run_warmup.py
+
+# Batch processing
+batch/
+
+# Dependency directories
+node_modules/
+
+# Taskmaster
+.taskmaster/
+
+# Claude Code
+.claude/
+.mcp.json
+
+# Generated docs (not source of truth)
+IMPLEMENTATION_SUMMARY.md
+PIPELINE_FLOWCHART_*.md
+PIPELINE_REVIEW_*.md
+QUICK_START.md
+QUICK_TEST_GUIDE_*.md
+README_TESTING_*.md
+TESTING_SUMMARY_*.md
+TEST_PLAN_*.md
+SUBREDDIT_GROUPS.md
+.env.example
+
+# Misc junk
+Usersasus*
+ovh_api_spec.json
+step_run.png
+current_state.png
+scripts/test_tier_output*.json
+scripts/tier_results/
+scripts/archived/
+src/uploaders/redgifs/tasteofmarina_*
+src/uploaders/reddit/posts*.csv
+src/uploaders/reddit/test_post*.csv
+
+# Misc
 examples/
+requirements_COMPLETE.txt

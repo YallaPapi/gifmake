@@ -506,8 +506,8 @@ class DailyScheduler:
             f"(due {task.scheduled_time}, {task.duration_minutes}min, "
             f"max {task.max_comments} comments)")
 
-    def _run_warmup_task(self, task: ScheduledTask):
-        """Execute a warmup session (background thread)."""
+    def _run_warmup_task(self, task: ScheduledTask, max_retries=3):
+        """Execute a warmup session (background thread) with auto-retry."""
         import requests as _requests
 
         ads_id = task.ads_id
@@ -523,107 +523,147 @@ class DailyScheduler:
         attributes = prof.get("attributes", {})
         account_age_days, account_created_at = self._resolve_age(prof)
 
-        # Rotate proxy before browser launch
-        if task.proxy_group:
-            self._rotate_proxy(task.proxy_group)
+        last_error = None
 
-        stats = None
-        try:
-            # 1. Start AdsPower browser
-            resp = _requests.get(
-                f"{api_base}/api/v1/browser/start"
-                f"?user_id={ads_id}&api_key={api_key}",
-                timeout=60,
-            )
-            data = resp.json()
-            if data.get("code") != 0:
-                raise RuntimeError(f"AdsPower error: {data}")
+        for attempt in range(1, max_retries + 1):
+            # Rotate proxy before each attempt
+            if task.proxy_group:
+                self._rotate_proxy(task.proxy_group)
 
-            ws_endpoint = data.get("data", {}).get("ws", {}).get("puppeteer")
-            if not ws_endpoint:
-                raise RuntimeError("No CDP endpoint returned")
+            stats = None
+            try:
+                # 1. Start AdsPower browser
+                resp = _requests.get(
+                    f"{api_base}/api/v1/browser/start"
+                    f"?user_id={ads_id}&api_key={api_key}",
+                    timeout=60,
+                )
+                data = resp.json()
+                if data.get("code") != 0:
+                    raise RuntimeError(f"AdsPower error: {data}")
 
-            logger.info(f"[{task.display_name}] Browser started")
+                ws_endpoint = (data.get("data", {})
+                               .get("ws", {}).get("puppeteer"))
+                if not ws_endpoint:
+                    raise RuntimeError("No CDP endpoint returned")
 
-            # 2. Connect Playwright
-            from playwright.sync_api import sync_playwright
-            from core.account_warmer import AccountWarmer
+                if attempt > 1:
+                    logger.info(
+                        f"[{task.display_name}] Retry {attempt}/{max_retries}"
+                        f" — browser started")
+                else:
+                    logger.info(f"[{task.display_name}] Browser started")
 
-            with sync_playwright() as p:
-                browser = None
-                for attempt in range(5):
-                    try:
-                        browser = p.chromium.connect_over_cdp(ws_endpoint)
-                        break
-                    except Exception as e:
-                        if attempt < 4:
-                            time.sleep(2 * (attempt + 1))
-                        else:
-                            raise e
+                # 2. Connect Playwright
+                from playwright.sync_api import sync_playwright
+                from core.account_warmer import AccountWarmer
 
-                ctx = (browser.contexts[0] if browser.contexts
-                       else browser.new_context())
-                all_pages = list(ctx.pages)
-
-                # Pick Reddit tab or first tab
-                page = None
-                for pg in all_pages:
-                    try:
-                        if "reddit.com" in (pg.url or ""):
-                            page = pg
-                            break
-                    except Exception:
-                        pass
-                if not page:
-                    page = all_pages[0] if all_pages else ctx.new_page()
-
-                # Close stale tabs
-                for pg in all_pages:
-                    if pg != page:
+                with sync_playwright() as p:
+                    browser = None
+                    for cdp_try in range(5):
                         try:
-                            pg.close()
+                            browser = p.chromium.connect_over_cdp(
+                                ws_endpoint)
+                            break
+                        except Exception as e:
+                            if cdp_try < 4:
+                                time.sleep(2 * (cdp_try + 1))
+                            else:
+                                raise e
+
+                    ctx = (browser.contexts[0] if browser.contexts
+                           else browser.new_context())
+                    all_pages = list(ctx.pages)
+
+                    # Pick Reddit tab or first tab
+                    page = None
+                    for pg in all_pages:
+                        try:
+                            if "reddit.com" in (pg.url or ""):
+                                page = pg
+                                break
                         except Exception:
                             pass
+                    if not page:
+                        page = (all_pages[0] if all_pages
+                                else ctx.new_page())
 
-                # 3. Run warmup
-                warmer = AccountWarmer(
-                    ads_id, page,
-                    persona=persona,
-                    attributes=attributes,
-                    grok_api_key=grok_key,
-                    account_age_days=account_age_days,
-                    account_created_at=account_created_at,
-                )
+                    # Close stale tabs
+                    for pg in all_pages:
+                        if pg != page:
+                            try:
+                                pg.close()
+                            except Exception:
+                                pass
 
-                day = warmer.get_day()
-                logger.info(
-                    f"[{task.display_name}] Day {day}, "
-                    f"{task.duration_minutes}min, "
-                    f"max {task.max_comments} comments, "
-                    f"{len(warmer.general_subs)} subs")
+                    # 3. Run warmup
+                    warmer = AccountWarmer(
+                        ads_id, page,
+                        persona=persona,
+                        attributes=attributes,
+                        grok_api_key=grok_key,
+                        account_age_days=account_age_days,
+                        account_created_at=account_created_at,
+                    )
 
-                stats = warmer.run_daily_warmup(
-                    session_minutes=task.duration_minutes,
-                    max_comments=task.max_comments,
-                )
+                    day = warmer.get_day()
+                    logger.info(
+                        f"[{task.display_name}] Day {day}, "
+                        f"{task.duration_minutes}min, "
+                        f"max {task.max_comments} comments, "
+                        f"{len(warmer.general_subs)} subs")
 
-            # Success
-            self._complete_task(task, "done", stats)
-            if stats:
-                logger.info(
-                    f"[{task.display_name}] ✓ DONE — "
-                    f"scrolls={stats['scrolls']}, "
-                    f"votes={stats['upvotes']}↑/{stats['downvotes']}↓, "
-                    f"comments={stats['comments']}, "
-                    f"joins={stats['joins']}")
+                    stats = warmer.run_daily_warmup(
+                        session_minutes=task.duration_minutes,
+                        max_comments=task.max_comments,
+                    )
 
-        except Exception as e:
-            logger.error(
-                f"[{task.display_name}] ✗ FAILED: {e}", exc_info=True)
-            self._complete_task(task, "failed", error=str(e))
+                # Check for zero-scroll session (feed failed to load)
+                if stats and stats.get("scrolls", 0) == 0:
+                    raise RuntimeError("Session produced 0 scrolls — "
+                                       "feed likely failed to load")
 
-        finally:
-            self._release_task(task)
+                # Success
+                self._complete_task(task, "done", stats)
+                self._release_task(task)
+                if stats:
+                    logger.info(
+                        f"[{task.display_name}] ✓ DONE — "
+                        f"scrolls={stats['scrolls']}, "
+                        f"votes={stats['upvotes']}↑/"
+                        f"{stats['downvotes']}↓, "
+                        f"comments={stats['comments']}, "
+                        f"joins={stats['joins']}")
+                return  # Success — exit retry loop
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    f"[{task.display_name}] Attempt {attempt}/{max_retries}"
+                    f" failed: {e}")
+
+                # Stop browser before retry
+                try:
+                    _requests.get(
+                        f"{api_base}/api/v1/browser/stop"
+                        f"?user_id={ads_id}&api_key={api_key}",
+                        timeout=30)
+                except Exception:
+                    pass
+
+                if attempt < max_retries:
+                    wait = 30 * attempt  # 30s, 60s, 90s
+                    logger.info(
+                        f"[{task.display_name}] Waiting {wait}s "
+                        f"before retry...")
+                    time.sleep(wait)
+
+        # All retries exhausted
+        logger.error(
+            f"[{task.display_name}] ✗ FAILED after {max_retries} attempts: "
+            f"{last_error}")
+        self._complete_task(task, "failed", error=str(last_error))
+        self._release_task(task)
 
     def _run_post_task(self, task: ScheduledTask):
         """Execute a posting task (Phase 2 — stub)."""
@@ -681,18 +721,18 @@ class DailyScheduler:
         return age_days, account_created_at
 
     def _rotate_proxy(self, proxy_group):
-        pg = self.queue_config.get("proxy_groups", {}).get(proxy_group, {})
+        pg = self.config.get("proxy_groups", {}).get(proxy_group, {})
         url = pg.get("rotation_url", "")
         if not url:
             return
         try:
             import requests as _requests
-            logger.info(f"Rotating proxy {proxy_group}...")
-            _requests.get(url, timeout=15)
-            wait = pg.get("wait_after_rotate_sec", 5)
-            time.sleep(wait)
+            logger.info(f"Rotating proxy [{proxy_group}]...")
+            resp = _requests.get(url, timeout=15)
+            logger.info(f"Proxy [{proxy_group}] rotated: {resp.text.strip()[:80]}")
+            time.sleep(5)
         except Exception as e:
-            logger.warning(f"Proxy rotation failed ({proxy_group}): {e}")
+            logger.warning(f"Proxy rotation failed [{proxy_group}]: {e}")
 
     # ── Status ───────────────────────────────────────────────────
 

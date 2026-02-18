@@ -9,5 +9,27 @@
   "accounts": "all",
   "check_interval_seconds": 60,
   "time_jitter_minutes": 15,
-  "proxy_stagger_minutes": 5
+  "proxy_stagger_minutes": 5,
+  "proxy_groups": {
+    "P": {
+      "rotation_url": "https://i.fxdx.in/actionlinks/do/changeip/T1zUio8iSveMkb2aKEFJtA",
+      "http": "http://p5rm25g435.cn.fxdx.in:14175:bmusproxy131527:39fvQoata1Vz",
+      "socks5": "socks5://p5rm25g435.cn.fxdx.in:13003:bmusproxy183028:yr4bPEkocLG6"
+    },
+    "G": {
+      "rotation_url": "https://i.fxdx.in/actionlinks/do/changeip/GljItzwCSmSlRV6YSoK8MQ",
+      "http": "http://gqkyupfcxz.cn.fxdx.in:16585:bmusproxy231414:scs4AzpxX7uj",
+      "socks5": "socks5://gqkyupfcxz.cn.fxdx.in:18425:bmusproxy231419:ZRtnPyQKIft2"
+    },
+    "F": {
+      "rotation_url": "https://i.fxdx.in/actionlinks/do/changeip/DxsxCtazR0CEq4-gLKJmww",
+      "http": "http://fwurujmqon.cn.fxdx.in:17729:bmusproxy231543:6mMdoB6e38KQ",
+      "socks5": "socks5://fwurujmqon.cn.fxdx.in:18428:bmusproxy231547:CL2h1ibzeVPa"
+    },
+    "4u": {
+      "rotation_url": "https://i.fxdx.in/actionlinks/do/changeip/Zm24RL5UQbioCePiT8ZTRw",
+      "http": "http://4upmd6ftnb.cn.fxdx.in:15351:lo0895090009:2lQq3HXIE5Qx",
+      "socks5": "socks5://4upmd6ftnb.cn.fxdx.in:16131:lo0895090012:n5WBUg5hmOiA"
+    }
+  }
 }

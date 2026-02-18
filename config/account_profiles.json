@@ -1,87 +1,542 @@
 {
   "profiles": {
-    "jenny_24": {
-      "profile_id": "jenny_24",
-      "display_name": "Jenny",
+    "honeytonedhaze": {
+      "profile_id": "honeytonedhaze",
+      "adspower_id": "k19p91f5",
+      "display_name": "Ruby",
+      "attributes": {
+        "age": 21,
+        "gender": "F",
+        "hair_color": "brunette",
+        "body_type": "curvy",
+        "ethnicity": "white",
+        "bust_size": "medium"
+      },
+      "persona": {
+        "location": "Nashville, TN",
+        "hobbies": [
+          "karaoke",
+          "rock climbing",
+          "hiking"
+        ],
+        "interests": [
+          "board games",
+          "vintage",
+          "K-pop",
+          "anime",
+          "cats",
+          "sustainability"
+        ],
+        "personality_traits": [
+          "creative",
+          "flirty",
+          "chill",
+          "spontaneous"
+        ],
+        "favorite_subs": [
+          "Nashville",
+          "cooking",
+          "fashion",
+          "Coffee",
+          "ThriftStoreHauls",
+          "itookapicture",
+          "yoga",
+          "TwoXChromosomes",
+          "TrueOffMyChest",
+          "photography",
+          "MakeupAddiction",
+          "AskReddit",
+          "movies"
+        ],
+        "comment_style": "casual"
+      },
+      "title_templates": {
+        "default": "{title}"
+      },
+      "flair_mappings": {},
+      "content_tags": [
+        "tattooed",
+        "lingerie",
+        "curvy",
+        "pierced",
+        "busty",
+        "solo_female",
+        "big_tits",
+        "natural_tits",
+        "redhead",
+        "huge_tits"
+      ],
+      "reddit_account": {
+        "username": "honeytonedhaze",
+        "age_days": 0,
+        "karma": 0,
+        "verified_subreddits": []
+      },
+      "created_at": "2026-02-14T13:53:24.350292",
+      "creator": "",
+      "proxy_group": "P"
+    },
+    "delicatepulse": {
+      "profile_id": "delicatepulse",
+      "adspower_id": "k19pw1ns",
+      "display_name": "Luna",
+      "attributes": {
+        "age": 25,
+        "gender": "F",
+        "hair_color": "brunette",
+        "body_type": "average",
+        "ethnicity": "white",
+        "bust_size": "medium"
+      },
+      "persona": {
+        "location": "New Orleans, LA",
+        "hobbies": [
+          "dancing",
+          "cooking",
+          "pottery",
+          "rock climbing",
+          "swimming",
+          "cycling"
+        ],
+        "interests": [
+          "horror",
+          "tarot",
+          "sci-fi",
+          "thrift fashion",
+          "space",
+          "dogs",
+          "sneakers"
+        ],
+        "personality_traits": [
+          "dry humor",
+          "creative",
+          "moody"
+        ],
+        "favorite_subs": [
+          "NewOrleans",
+          "tattoos",
+          "memes",
+          "fashion",
+          "TwoXChromosomes",
+          "MakeupAddiction",
+          "Music",
+          "Astronomy",
+          "cats",
+          "horror"
+        ],
+        "comment_style": "casual"
+      },
+      "title_templates": {
+        "default": "{title}"
+      },
+      "flair_mappings": {},
+      "content_tags": [],
+      "reddit_account": {
+        "username": "delicatepulse",
+        "age_days": 0,
+        "karma": 0,
+        "verified_subreddits": []
+      },
+      "created_at": "2026-02-15T10:48:17.298801",
+      "creator": "",
+      "proxy_group": "4u"
+    },
+    "sweetheatmurmur": {
+      "profile_id": "sweetheatmurmur",
+      "adspower_id": "k19pw2fi",
+      "display_name": "Aurora",
+      "attributes": {
+        "age": 27,
+        "gender": "F",
+        "hair_color": "brunette",
+        "body_type": "average",
+        "ethnicity": "white",
+        "bust_size": "medium"
+      },
+      "persona": {
+        "location": "Minneapolis, MN",
+        "hobbies": [
+          "gardening",
+          "running",
+          "cooking",
+          "reading"
+        ],
+        "interests": [
+          "mythology",
+          "sustainability",
+          "coffee",
+          "true crime",
+          "anime",
+          "crystals"
+        ],
+        "personality_traits": [
+          "creative",
+          "chill",
+          "spontaneous",
+          "dry humor"
+        ],
+        "favorite_subs": [
+          "Minneapolis",
+          "ThriftStoreHauls",
+          "yoga",
+          "art",
+          "Music",
+          "photography",
+          "Showerthoughts",
+          "itookapicture",
+          "TwoXChromosomes",
+          "MakeupAddiction",
+          "food",
+          "tattoos",
+          "CozyPlaces",
+          "SkincareAddiction"
+        ],
+        "comment_style": "casual"
+      },
+      "title_templates": {
+        "default": "{title}"
+      },
+      "flair_mappings": {},
+      "content_tags": [],
+      "reddit_account": {
+        "username": "sweetheatmurmur",
+        "age_days": 0,
+        "karma": 0,
+        "verified_subreddits": []
+      },
+      "created_at": "2026-02-15T10:48:53.039825",
+      "creator": "",
+      "proxy_group": "F"
+    },
+    "tendercurveink": {
+      "profile_id": "tendercurveink",
+      "adspower_id": "k19pw0a5",
+      "display_name": "Scarlett",
+      "attributes": {
+        "age": 28,
+        "gender": "F",
+        "hair_color": "brunette",
+        "body_type": "average",
+        "ethnicity": "white",
+        "bust_size": "medium"
+      },
+      "persona": {
+        "location": "Houston, TX",
+        "hobbies": [
+          "skateboarding",
+          "running",
+          "swimming",
+          "camping",
+          "journaling"
+        ],
+        "interests": [
+          "board games",
+          "space",
+          "fashion",
+          "vintage",
+          "brunch",
+          "plants",
+          "sneakers"
+        ],
+        "personality_traits": [
+          "introverted",
+          "dry humor",
+          "nerdy"
+        ],
+        "favorite_subs": [
+          "Houston",
+          "movies",
+          "cats",
+          "MakeupAddiction",
+          "Showerthoughts",
+          "Coffee",
+          "aww",
+          "AskReddit",
+          "fashion",
+          "memes",
+          "TrueOffMyChest",
+          "EarthPorn",
+          "funny"
+        ],
+        "comment_style": "casual"
+      },
+      "title_templates": {
+        "default": "{title}"
+      },
+      "flair_mappings": {},
+      "content_tags": [],
+      "reddit_account": {
+        "username": "tendercurveink",
+        "age_days": 0,
+        "karma": 0,
+        "verified_subreddits": []
+      },
+      "created_at": "2026-02-15T10:49:15.749720",
+      "creator": "",
+      "proxy_group": "G"
+    },
+    "wickedwillowwave": {
+      "profile_id": "wickedwillowwave",
+      "adspower_id": "k19qhk22",
+      "display_name": "Willow",
+      "attributes": {
+        "age": 23,
+        "gender": "F",
+        "hair_color": "blonde",
+        "body_type": "slim",
+        "ethnicity": "white",
+        "bust_size": "medium"
+      },
+      "persona": {
+        "location": "Portland, OR",
+        "hobbies": [
+          "painting",
+          "yoga",
+          "thrifting",
+          "hiking",
+          "journaling"
+        ],
+        "interests": [
+          "indie music",
+          "astrology",
+          "plants",
+          "true crime",
+          "cats",
+          "coffee"
+        ],
+        "personality_traits": [
+          "witty",
+          "chill",
+          "artsy",
+          "sarcastic"
+        ],
+        "favorite_subs": [
+          "Portland",
+          "houseplants",
+          "IndieHeads",
+          "art",
+          "yoga",
+          "ThriftStoreHauls",
+          "cats",
+          "AskReddit",
+          "TrueOffMyChest",
+          "SkincareAddiction",
+          "CozyPlaces",
+          "memes"
+        ],
+        "comment_style": "casual"
+      },
+      "title_templates": {
+        "default": "{title}"
+      },
+      "flair_mappings": {},
+      "content_tags": [],
+      "reddit_account": {
+        "username": "WickedWillowWave",
+        "age_days": 0,
+        "karma": 0,
+        "verified_subreddits": []
+      },
+      "created_at": "2026-02-16T19:00:00.000000",
+      "creator": "",
+      "proxy_group": "P"
+    },
+    "opaloliviaaura": {
+      "profile_id": "opaloliviaaura",
+      "adspower_id": "k19qhjvc",
+      "display_name": "Olivia",
       "attributes": {
         "age": 24,
         "gender": "F",
-        "hair_color": "redhead",
+        "hair_color": "black",
         "body_type": "petite",
-        "ethnicity": "white",
+        "ethnicity": "latina",
         "bust_size": "small"
       },
+      "persona": {
+        "location": "Miami, FL",
+        "hobbies": [
+          "surfing",
+          "photography",
+          "dancing",
+          "cooking"
+        ],
+        "interests": [
+          "reggaeton",
+          "streetwear",
+          "beach life",
+          "dogs",
+          "makeup",
+          "reality TV"
+        ],
+        "personality_traits": [
+          "bubbly",
+          "flirty",
+          "spontaneous",
+          "loud"
+        ],
+        "favorite_subs": [
+          "Miami",
+          "Cooking",
+          "streetwear",
+          "dogs",
+          "BeachPorn",
+          "MakeupAddiction",
+          "LatinoPeopleTwitter",
+          "AskReddit",
+          "funny",
+          "aww",
+          "Music",
+          "relationship_advice"
+        ],
+        "comment_style": "casual"
+      },
       "title_templates": {
-        "default": "{title}",
-        "age_gender": "[{age}F] {title}",
-        "simple_gender": "[F] {title}",
-        "emoji": "{title}"
+        "default": "{title}"
       },
-      "flair_mappings": {
-        "gonewild": "OC",
-        "petitegonewild": "Verified",
-        "realgirls": "OC",
-        "redheads": null
-      },
-      "content_tags": [
-        "petite",
-        "redhead",
-        "amateur",
-        "young",
-        "small-tits"
-      ],
+      "flair_mappings": {},
+      "content_tags": [],
       "reddit_account": {
-        "username": "jenny_plays_24",
-        "age_days": 45,
-        "karma": 1500,
-        "verified_subreddits": [
-          "gonewild",
-          "petitegonewild"
-        ]
+        "username": "OpalOliviaAura",
+        "age_days": 0,
+        "karma": 0,
+        "verified_subreddits": []
       },
-      "created_at": "2024-01-15T10:30:00"
+      "created_at": "2026-02-16T19:00:00.000000",
+      "creator": "",
+      "proxy_group": "4u"
     },
-    "maria_40": {
-      "profile_id": "maria_40",
-      "display_name": "Maria",
+    "softsadiestudio": {
+      "profile_id": "softsadiestudio",
+      "adspower_id": "k19qhjob",
+      "display_name": "Sadie",
       "attributes": {
-        "age": 40,
+        "age": 22,
+        "gender": "F",
+        "hair_color": "red",
+        "body_type": "average",
+        "ethnicity": "white",
+        "bust_size": "medium"
+      },
+      "persona": {
+        "location": "Austin, TX",
+        "hobbies": [
+          "guitar",
+          "baking",
+          "running",
+          "reading",
+          "crafting"
+        ],
+        "interests": [
+          "folk music",
+          "tattoos",
+          "cats",
+          "vintage fashion",
+          "tarot",
+          "skincare"
+        ],
+        "personality_traits": [
+          "shy",
+          "creative",
+          "warm",
+          "nerdy"
+        ],
+        "favorite_subs": [
+          "Austin",
+          "Baking",
+          "tattoos",
+          "cats",
+          "books",
+          "SkincareAddiction",
+          "TwoXChromosomes",
+          "CozyPlaces",
+          "crafts",
+          "AskReddit",
+          "movies",
+          "food"
+        ],
+        "comment_style": "casual"
+      },
+      "title_templates": {
+        "default": "{title}"
+      },
+      "flair_mappings": {},
+      "content_tags": [],
+      "reddit_account": {
+        "username": "SoftSadieStudio",
+        "age_days": 0,
+        "karma": 0,
+        "verified_subreddits": []
+      },
+      "created_at": "2026-02-16T19:00:00.000000",
+      "creator": "",
+      "proxy_group": "F"
+    },
+    "urbanumavibes": {
+      "profile_id": "urbanumavibes",
+      "adspower_id": "k19qhjjr",
+      "display_name": "Uma",
+      "attributes": {
+        "age": 26,
         "gender": "F",
         "hair_color": "brunette",
-        "body_type": "thick",
-        "ethnicity": "latina",
-        "bust_size": "large"
+        "body_type": "athletic",
+        "ethnicity": "mixed",
+        "bust_size": "medium"
+      },
+      "persona": {
+        "location": "Chicago, IL",
+        "hobbies": [
+          "boxing",
+          "cooking",
+          "photography",
+          "hiking",
+          "gaming"
+        ],
+        "interests": [
+          "sneakers",
+          "hip hop",
+          "streetwear",
+          "anime",
+          "dogs",
+          "food trucks"
+        ],
+        "personality_traits": [
+          "confident",
+          "funny",
+          "blunt",
+          "loyal"
+        ],
+        "favorite_subs": [
+          "chicago",
+          "Sneakers",
+          "hiphopheads",
+          "anime",
+          "dogs",
+          "food",
+          "streetwear",
+          "AskReddit",
+          "memes",
+          "funny",
+          "gaming",
+          "TrueOffMyChest"
+        ],
+        "comment_style": "casual"
       },
       "title_templates": {
-        "default": "{title}",
-        "age_gender": "[{age}F] {title}",
-        "milf_style": "MILF {title}",
-        "latina_style": "Latina MILF - {title}"
+        "default": "{title}"
       },
-      "flair_mappings": {
-        "gonewildcurvy": "OC",
-        "latinas": "Verified Latina",
-        "milf": "OC",
-        "thick": null
-      },
-      "content_tags": [
-        "milf",
-        "thick",
-        "latina",
-        "boobs",
-        "curvy",
-        "mature"
-      ],
+      "flair_mappings": {},
+      "content_tags": [],
       "reddit_account": {
-        "username": "maria_mature",
-        "age_days": 90,
-        "karma": 5000,
-        "verified_subreddits": [
-          "gonewildcurvy",
-          "latinas"
-        ]
+        "username": "UrbanUmaVibes",
+        "age_days": 0,
+        "karma": 0,
+        "verified_subreddits": []
       },
-      "created_at": "2024-01-10T08:00:00"
+      "created_at": "2026-02-16T19:00:00.000000",
+      "creator": "",
+      "proxy_group": "G"
     }
   }
 }
