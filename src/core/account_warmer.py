@@ -568,7 +568,8 @@ class AccountWarmer:
             remaining -= chunk
         return not self.stop_requested
 
-    def _log_action(self, action_type, sub="", url="", text="", status="ok"):
+    def _log_action(self, action_type, sub="", url="", text="", status="ok",
+                    style="", sentiment=""):
         """Record an individual action for the activity popout."""
         import datetime
         self.action_log.append({
@@ -577,6 +578,8 @@ class AccountWarmer:
             "url": url,
             "text": text[:200] if text else "",
             "status": status,
+            "style": style,
+            "sentiment": sentiment,
             "ts": datetime.datetime.now().strftime("%H:%M:%S"),
         })
 
@@ -1356,6 +1359,10 @@ class AccountWarmer:
             k=1,
         )[0]
 
+        # Store for action_log attribution
+        self._last_comment_style = styles
+        self._last_comment_sentiment = sentiment
+
         style_instructions = {
             "pun": (
                 "Write a PUN or CLEVER WORDPLAY comment based on the post.\n"
@@ -1673,7 +1680,9 @@ class AccountWarmer:
             logger.info(f"  Comment VERIFIED (total: {self.stats['comments']}): "
                        f"'{comment[:60]}'")
             self._log_action("comment", sub=comment_sub,
-                             url=self.page.url, text=comment, status="verified")
+                             url=self.page.url, text=comment, status="verified",
+                             style=getattr(self, '_last_comment_style', ''),
+                             sentiment=getattr(self, '_last_comment_sentiment', ''))
             self._wait_for_timeout(random.randint(1000, 2000))
             return True
 
@@ -1815,7 +1824,9 @@ class AccountWarmer:
             logger.info(f"  Reply VERIFIED (total: {self.stats['comments']}): "
                        f"'{reply_text[:60]}'")
             self._log_action("reply", sub=reply_sub,
-                             url=self.page.url, text=reply_text, status="verified")
+                             url=self.page.url, text=reply_text, status="verified",
+                             style=getattr(self, '_last_comment_style', ''),
+                             sentiment=getattr(self, '_last_comment_sentiment', ''))
             self._wait_for_timeout(random.randint(1000, 2000))
             return True
 

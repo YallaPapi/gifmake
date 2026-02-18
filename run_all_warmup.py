@@ -515,5 +515,12 @@ if __name__ == "__main__":
         json.dump(report, f, indent=2)
     logger.info(f"Report saved: {report_path}")
 
+    # Run karma tracking report
+    try:
+        from core.karma_tracker import run_karma_report
+        run_karma_report(all_results, ban_log)
+    except Exception as e:
+        logger.error(f"Karma report failed: {e}", exc_info=True)
+
     # Close ALL browsers at the end — leave nothing open
     close_all_browsers()
