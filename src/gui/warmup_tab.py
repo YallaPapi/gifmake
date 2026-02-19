@@ -2252,6 +2252,13 @@ class WarmupTab:
         """Background thread: continuous cycling until all accounts hit daily caps or stopped."""
         self.app.after(0, self._log, "=== CONTINUOUS WARMUP STARTED ===")
 
+        # Clean up orphaned browsers from previous crashes
+        closed = self._close_all_browsers()
+        if closed:
+            self.app.after(0, self._log,
+                           f"Cleaned up {closed} orphaned browser(s) from previous run")
+            time.sleep(3)
+
         # Discover accounts (once — the pool doesn't change mid-run)
         self.app.after(0, self._log, "Discovering accounts from AdsPower...")
         accounts_by_group = self._discover_all_accounts()
@@ -2376,13 +2383,6 @@ class WarmupTab:
 
     def _run_one_cycle(self, accounts_by_group, grok_key, active_ids):
         """Run one full pass through all proxy groups. Returns True if any account ran."""
-        # Kill any orphaned browsers from previous crashes/cycles
-        closed = self._close_all_browsers()
-        if closed:
-            self.app.after(0, self._log,
-                           f"Cleaned up {closed} orphaned browser(s) before starting cycle")
-            time.sleep(3)
-
         # Day boundary check — reset caps at midnight
         current_date = datetime.now().strftime("%Y-%m-%d")
         if self._last_cycle_date != current_date:
