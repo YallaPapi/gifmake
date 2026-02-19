@@ -11,6 +11,7 @@ import json
 import sys
 import logging
 import time
+import random
 import requests
 from datetime import datetime
 import re
@@ -73,6 +74,16 @@ ADSPOWER_CONFIG_PATH = os.path.join(
 ACCOUNT_PROFILES_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "config", "account_profiles.json"
 )
+
+# Run All constants
+PROXY_PREFIXES = ("P ", "G ", "F ", "4u ")
+BAN_LOG_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "data", "warmup_bans.json"
+)
+SCHEDULE_CONFIG_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "config", "schedule_config.json"
+)
+
 CARD_FG = ("#F7F9FC", "#1A2030")
 CARD_INNER = ("#FFFFFF", "#1E2638")
 HERO_FG = ("#EAF3FF", "#0F1A2E")
@@ -160,6 +171,16 @@ class WarmupTab:
         self.adspower_config = {}
         self.profiles_data = {}  # adspower profile_id -> account_name
         self.persona_profiles = {}  # persona key -> persona dict
+
+        # Run All state — multi-account warmup across all proxy groups
+        self._run_all_active = False
+        self._run_all_stop = False
+        self._group_threads = {}        # {group: Thread}
+        self._group_results = {}        # {group: [result_dicts]}
+        self._group_warmers = {}        # {group: AccountWarmer or None}
+        self._ban_log = {}
+        self._rotation_urls = {}
+        self._run_all_lock = threading.Lock()
 
         self._load_adspower_config()
         self._load_persona_profiles()
@@ -341,14 +362,14 @@ class WarmupTab:
         self.add_account_btn.grid(row=0, column=2, padx=(5, 0), pady=5)
 
         self.remove_account_btn = ctk.CTkButton(
-            acct_frame, text="Remove", width=80, height=30,
+            acct_frame, text="Unlink", width=80, height=30,
             fg_color=WARN, hover_color=WARN_HOVER, font=("Segoe UI", 11, "bold"),
             command=self._remove_selected_account
         )
         self.remove_account_btn.grid(row=0, column=3, padx=(5, 0), pady=5)
 
         self.reload_accounts_btn = ctk.CTkButton(
-            acct_frame, text="Reload", width=70, height=30,
+            acct_frame, text="Reload Config", width=100, height=30,
             fg_color="#334155", hover_color="#1F2937", font=("Segoe UI", 11),
             command=self._reload_persona
         )
@@ -364,8 +385,9 @@ class WarmupTab:
             self.profile_entry.insert(0, ads_id)
 
         acct_help = ctk.CTkLabel(acct_frame,
-            text="This is the Reddit account that will be warmed up. "
-                 "The bot browses Reddit using this account's browser profile.",
+            text="Select an account for Single Account Warmup below. "
+                 "Format: username (AdsPower browser ID). "
+                 "Multi-Account Warmup ignores this — it auto-discovers from AdsPower.",
             font=("Segoe UI", 11), text_color=("#4B5563", "#94A3B8")
         )
         acct_help.grid(row=1, column=0, columnspan=5, sticky="ew", padx=10, pady=(0, 5))
@@ -406,7 +428,7 @@ class WarmupTab:
         ).grid(row=0, column=1, padx=(10, 0))
 
         ctk.CTkButton(
-            config_row, text="Reload", width=70, height=28,
+            config_row, text="Reload Config", width=100, height=28,
             font=("Segoe UI", 11), fg_color="#475569", hover_color="#334155",
             command=self._reload_persona
         ).grid(row=0, column=2, padx=(5, 0))
@@ -430,7 +452,7 @@ class WarmupTab:
 
         sess_inner.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(sess_inner, text="SESSION",
+        ctk.CTkLabel(sess_inner, text="CURRENT RUN",
                      font=("Segoe UI", 11, "bold"),
                      text_color=("#0F766E", "#14B8A6")).grid(
             row=0, column=0, sticky="w", padx=10, pady=(8, 4))
@@ -448,11 +470,11 @@ class WarmupTab:
             ("upvotes", "Upvotes", "upvote"),
             ("downvotes", "Downvotes", "downvote"),
             ("comments", "Comments", "comment"),
-            ("joins", "Joined", "join"),
-            ("clicks", "Clicks", "click"),
-            ("scrolls", "Scrolls", "scroll"),
-            ("subs", "Subs seen", "session"),
-            ("sessions", "Sessions", "time"),
+            ("joins", "Subs Joined", "join"),
+            ("clicks", "Posts Read", "click"),
+            ("scrolls", "Feed Scrolls", "scroll"),
+            ("subs", "Subs Visited", "session"),
+            ("sessions", "Browse Loops", "time"),
         ]
         for key, label, color_key in pill_defs:
             pill, val_lbl = _make_pill(pill_frame, "--", label, color_key)
@@ -464,16 +486,21 @@ class WarmupTab:
             self.parent, accent_color=("#94A3B8", "#475569"),
             row=4, column=0, sticky="ew", padx=5, pady=(0, 5))
 
-        ctk.CTkLabel(life_inner, text="LIFETIME STATS",
+        life_hdr = ctk.CTkFrame(life_inner, fg_color="transparent")
+        life_hdr.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
+        ctk.CTkLabel(life_hdr, text="LIFETIME TOTALS",
                      font=("Segoe UI", 11, "bold"),
-                     text_color=("#6B7280", "#94A3B8")).grid(
-            row=0, column=0, sticky="w", padx=10, pady=(8, 0))
+                     text_color=("#6B7280", "#94A3B8")).pack(side="left")
+        ctk.CTkLabel(life_hdr,
+                     text="  (all warmup sessions combined for selected account)",
+                     font=("Segoe UI", 10),
+                     text_color=("#9CA3AF", "#6B7280")).pack(side="left")
 
         life_vals = ctk.CTkFrame(life_inner, fg_color="transparent")
         life_vals.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 8))
 
         self.day_label = ctk.CTkLabel(
-            life_vals, text="Day --", font=("Segoe UI", 14, "bold"),
+            life_vals, text="Account Age: --", font=("Segoe UI", 14, "bold"),
             text_color=("#334155", "#E2E8F0"))
         self.day_label.pack(side="left", padx=(0, 14))
 
@@ -483,7 +510,7 @@ class WarmupTab:
         self.status_val_label.pack(side="left", padx=(0, 18))
 
         self.upvotes_label = ctk.CTkLabel(
-            life_vals, text="0 votes", font=("Segoe UI", 13, "bold"),
+            life_vals, text="0 upvotes", font=("Segoe UI", 13, "bold"),
             text_color=("#16A34A", "#22C55E"))
         self.upvotes_label.pack(side="left", padx=(0, 14))
 
@@ -502,53 +529,124 @@ class WarmupTab:
             text_color=("#7C3AED", "#A78BFA"))
         self.posts_label.pack(side="left")
 
-        # === ROW 5: BUTTONS ===
-        btn_frame = ctk.CTkFrame(self.parent, fg_color="transparent")
-        btn_frame.grid(row=5, column=0, sticky="ew", padx=5, pady=5)
-        btn_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        # === ROW 5: SINGLE ACCOUNT WARMUP ===
+        single_frame = ctk.CTkFrame(self.parent, fg_color=CARD_FG, corner_radius=8)
+        single_frame.grid(row=5, column=0, sticky="ew", padx=5, pady=(5, 3))
+        single_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        ctk.CTkLabel(
+            single_frame, text="SINGLE ACCOUNT WARMUP",
+            font=("Segoe UI", 12, "bold"), text_color=("#0F766E", "#14B8A6"),
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=8, pady=(8, 0))
+        single_desc = ctk.CTkLabel(
+            single_frame,
+            text="Runs warmup for the one account selected in the dropdown above. "
+                 "Opens that account's AdsPower browser, browses Reddit, votes, comments, "
+                 "and joins subs. No proxy rotation (single account only).",
+            font=("Segoe UI", 10), text_color=("#9CA3AF", "#6B7280"), anchor="w",
+        )
+        single_desc.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 6))
+        _auto_wrap(single_desc)
 
         self.start_btn = ctk.CTkButton(
-            btn_frame, text="Start Warmup", font=("Segoe UI", 13, "bold"),
-            height=40, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            single_frame, text="Start Selected Account", font=("Segoe UI", 13, "bold"),
+            height=38, fg_color=ACCENT, hover_color=ACCENT_HOVER,
             command=self._start_warmup)
-        self.start_btn.grid(row=0, column=0, sticky="ew", padx=3)
+        self.start_btn.grid(row=2, column=0, sticky="ew", padx=4, pady=(0, 6))
 
         self.stop_btn = ctk.CTkButton(
-            btn_frame, text="Stop", font=("Segoe UI", 13, "bold"),
-            height=40, fg_color=WARN, hover_color=WARN_HOVER,
+            single_frame, text="Stop (Graceful)", font=("Segoe UI", 13, "bold"),
+            height=38, fg_color=WARN, hover_color=WARN_HOVER,
             command=self._stop_warmup, state="disabled")
-        self.stop_btn.grid(row=0, column=1, sticky="ew", padx=3)
+        self.stop_btn.grid(row=2, column=1, sticky="ew", padx=4, pady=(0, 6))
 
         self.refresh_btn = ctk.CTkButton(
-            btn_frame, text="Refresh Stats", font=("Segoe UI", 13, "bold"),
-            height=40, fg_color="#334155", hover_color="#1F2937",
+            single_frame, text="Reload DB Stats", font=("Segoe UI", 13, "bold"),
+            height=38, fg_color="#334155", hover_color="#1F2937",
             command=self._refresh_stats)
-        self.refresh_btn.grid(row=0, column=2, sticky="ew", padx=3)
+        self.refresh_btn.grid(row=2, column=2, sticky="ew", padx=4, pady=(0, 6))
 
         self.activity_btn = ctk.CTkButton(
-            btn_frame, text="View Activity", font=("Segoe UI", 13, "bold"),
-            height=40, fg_color="#1E40AF", hover_color="#1E3A8A",
+            single_frame, text="Last Session Log", font=("Segoe UI", 13, "bold"),
+            height=38, fg_color="#1E40AF", hover_color="#1E3A8A",
             command=self._show_activity_popout)
-        self.activity_btn.grid(row=0, column=3, sticky="ew", padx=3)
+        self.activity_btn.grid(row=2, column=3, sticky="ew", padx=4, pady=(0, 6))
+
+        # === ROW 6: MULTI-ACCOUNT WARMUP ===
+        all_frame = ctk.CTkFrame(self.parent, fg_color=CARD_FG, corner_radius=8,
+                                 border_width=2, border_color=("#15803D", "#166534"))
+        all_frame.grid(row=6, column=0, sticky="ew", padx=5, pady=(3, 5))
+        all_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        ctk.CTkLabel(
+            all_frame, text="MULTI-ACCOUNT WARMUP (ALL PROXY GROUPS)",
+            font=("Segoe UI", 12, "bold"), text_color=("#15803D", "#4ADE80"),
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=8, pady=(8, 0))
+        all_desc = ctk.CTkLabel(
+            all_frame,
+            text="Scans AdsPower for ALL accounts named 'P ...', 'G ...', 'F ...', '4u ...' "
+                 "(these are the 4 proxy groups — each shares one mobile proxy IP). "
+                 "Runs 4 threads (one per group). Within each group, accounts run one at a time: "
+                 "open browser \u2192 ban check \u2192 warmup \u2192 close browser \u2192 rotate proxy IP \u2192 next account. "
+                 "Permabanned accounts (from data/warmup_bans.json) are auto-skipped.",
+            font=("Segoe UI", 10), text_color=("#9CA3AF", "#6B7280"), anchor="w",
+        )
+        all_desc.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 6))
+        _auto_wrap(all_desc)
+
+        self.run_all_btn = ctk.CTkButton(
+            all_frame, text="Start All Accounts (Auto-Discover from AdsPower)",
+            font=("Segoe UI", 13, "bold"),
+            height=42, fg_color="#15803D", hover_color="#166534",
+            command=self._start_run_all)
+        self.run_all_btn.grid(row=2, column=0, columnspan=2, sticky="ew", padx=4, pady=(0, 6))
+
+        self.stop_all_btn = ctk.CTkButton(
+            all_frame, text="Stop All (Graceful)", font=("Segoe UI", 13, "bold"),
+            height=42, fg_color="#991B1B", hover_color="#7F1D1D",
+            command=self._stop_run_all, state="disabled")
+        self.stop_all_btn.grid(row=2, column=2, columnspan=2, sticky="ew", padx=4, pady=(0, 6))
+
+        # Proxy group progress — with header explaining what the groups are
+        ctk.CTkLabel(
+            all_frame, text="Proxy Group Progress:",
+            font=("Segoe UI", 10, "bold"), text_color=("#6B7280", "#9CA3AF"),
+            anchor="w",
+        ).grid(row=3, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 0))
+
+        self._group_labels = {}
+        for i, grp in enumerate(["P", "G", "F", "4u"]):
+            lbl = ctk.CTkLabel(
+                all_frame, text=f"{grp}: waiting",
+                font=("Segoe UI", 11, "bold"), text_color=("#334155", "#94A3B8"))
+            lbl.grid(row=4, column=i, padx=8, pady=2)
+            self._group_labels[grp] = lbl
+
+        self._run_all_overall_label = ctk.CTkLabel(
+            all_frame, text="Not started",
+            font=("Segoe UI", 11), text_color=("#4B5563", "#94A3B8"))
+        self._run_all_overall_label.grid(row=5, column=0, columnspan=4, pady=(0, 8))
 
         # Store last session's action log for the popout
         self._last_action_log = []
 
-        # === ROW 6: PROGRESS ===
+        # === ROW 7: PROGRESS ===
         self.progress_label = ctk.CTkLabel(
             self.parent, text="", font=("Segoe UI", 11), text_color=("#4B5563", "#94A3B8"))
-        self.progress_label.grid(row=6, column=0, sticky="w", padx=10, pady=(5, 2))
+        self.progress_label.grid(row=7, column=0, sticky="w", padx=10, pady=(5, 2))
 
-        # === ROW 8: LOG BOX ===
+        # === ROW 8: LOG LABEL / ROW 9: LOG BOX ===
         ctk.CTkLabel(
             self.parent, text="Live Activity Log", font=("Segoe UI", 12, "bold")
-        ).grid(row=7, column=0, sticky="w", padx=10, pady=(5, 0))
+        ).grid(row=8, column=0, sticky="w", padx=10, pady=(5, 0))
         self.log_box = ctk.CTkTextbox(
             self.parent, height=350, font=("Consolas", 11),
             fg_color=("#F9FAFB", "#0D1117"), border_width=1,
             border_color=("#D1D5DB", "#21262D"))
-        self.log_box.grid(row=8, column=0, sticky="nsew", padx=5, pady=5)
-        self.parent.grid_rowconfigure(8, weight=1)
+        self.log_box.grid(row=9, column=0, sticky="nsew", padx=5, pady=5)
+        self.parent.grid_rowconfigure(9, weight=1)
         _setup_log_tags(self.log_box)
 
         # Trigger initial account selection (must be after all widgets are created)
@@ -821,23 +919,26 @@ class WarmupTab:
             status = None
 
         if not status:
-            self.day_label.configure(text="Day --")
+            self.day_label.configure(text="Account Age: --")
             self.status_val_label.configure(text="not started")
-            self.upvotes_label.configure(text="0 votes")
+            self.upvotes_label.configure(text="0 upvotes")
             self.comments_label.configure(text="0 comments")
             self.joins_label.configure(text="0 joins")
             self.posts_label.configure(text="0 posts")
             return
 
         day = get_warmup_day(profile_id)
-        self.day_label.configure(text=f"Day {day}")
+        self.day_label.configure(text=f"Account Age: {day}d")
         self.status_val_label.configure(text=f"{status.get('status', '--')}")
-        self.upvotes_label.configure(text=f"{status.get('total_upvotes', 0)} votes")
+        self.upvotes_label.configure(text=f"{status.get('total_upvotes', 0)} upvotes")
         self.comments_label.configure(text=f"{status.get('total_comments', 0)} comments")
         self.joins_label.configure(text=f"{status.get('total_joins', 0)} joins")
         self.posts_label.configure(text=f"{status.get('total_posts', 0)} posts")
 
     def _start_warmup(self):
+        if self._run_all_active:
+            messagebox.showwarning("Busy", "Run All is active. Stop it first.")
+            return
         profile_id = self.profile_entry.get().strip()
         if not profile_id:
             messagebox.showerror("Error", "Select a Reddit account first.")
@@ -870,7 +971,7 @@ class WarmupTab:
                     account_age_days = None
 
         # Disable buttons and reset session display
-        self.start_btn.configure(state="disabled", text="Running...")
+        self.start_btn.configure(state="disabled", text=f"Running: {profile_id[:12]}...")
         self.stop_btn.configure(state="normal")
         self.refresh_btn.configure(state="disabled")
         self.is_running = True
@@ -1054,7 +1155,7 @@ class WarmupTab:
         self.is_running = False
         self._stop_requested = False
         self.warmer = None
-        self.start_btn.configure(state="normal", text="Start Warmup")
+        self.start_btn.configure(state="normal", text="Start Selected Account")
         self.stop_btn.configure(state="disabled")
         self.refresh_btn.configure(state="normal")
 
@@ -1175,3 +1276,534 @@ class WarmupTab:
                 scroll, text=status, font=("Segoe UI", 11, "bold"), fg_color=bg,
                 text_color=status_colors.get(status, "#6B7280"), anchor="w")
             status_lbl.grid(row=row, column=4, sticky="ew", padx=4, pady=1)
+
+    # ================================================================
+    # RUN ALL — multi-account warmup with proxy rotation & ban detection
+    # ================================================================
+
+    def _load_ban_log(self):
+        """Load ban log from disk."""
+        if os.path.exists(BAN_LOG_PATH):
+            with open(BAN_LOG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {}
+
+    def _save_ban_log(self):
+        """Save ban log to disk (thread-safe)."""
+        with self._run_all_lock:
+            os.makedirs(os.path.dirname(BAN_LOG_PATH), exist_ok=True)
+            tmp = BAN_LOG_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._ban_log, f, indent=2)
+            os.replace(tmp, BAN_LOG_PATH)
+
+    def _load_rotation_urls(self):
+        """Load proxy rotation URLs from schedule_config.json."""
+        try:
+            with open(SCHEDULE_CONFIG_PATH, encoding="utf-8") as f:
+                cfg = json.load(f)
+            groups = cfg.get("proxy_groups", {})
+            return {k: v.get("rotation_url", "") for k, v in groups.items()}
+        except Exception:
+            return {}
+
+    def _discover_all_accounts(self):
+        """Query AdsPower API for all reddit bot profiles.
+
+        Returns dict: {"P": [acc, ...], "G": [...], ...}
+        where each acc = {name, username, adspower_id, proxy_group}
+        """
+        api_base = self.adspower_config.get(
+            "adspower_api_base", "http://localhost:50325")
+        api_key = self.adspower_config.get("api_key", "")
+        by_group = {}
+        page_num = 1
+        total = 0
+        while True:
+            data = None
+            for attempt in range(3):
+                try:
+                    resp = requests.get(
+                        f"{api_base}/api/v1/user/list",
+                        params={"api_key": api_key, "page": page_num, "page_size": 100},
+                        timeout=30,
+                    )
+                    data = resp.json()
+                except Exception as e:
+                    logger.warning(f"AdsPower API request failed: {e}")
+                    time.sleep(2)
+                    continue
+                if data.get("code") == 0:
+                    break
+                logger.warning(f"AdsPower API rate limit (attempt {attempt+1}): {data}")
+                time.sleep(2)
+            if not data or data.get("code") != 0:
+                logger.error(f"AdsPower API error after retries: {data}")
+                break
+
+            items = data.get("data", {}).get("list", [])
+            if not items:
+                break
+
+            for item in items:
+                name = (item.get("name") or "").strip()
+                for prefix in PROXY_PREFIXES:
+                    if name.startswith(prefix):
+                        grp = prefix.strip()
+                        username = name[len(prefix):].strip()
+                        # Handle "P - reddit bot - Username" format
+                        if " - " in username:
+                            username = username.rsplit(" - ", 1)[-1].strip()
+                        by_group.setdefault(grp, []).append({
+                            "name": name,
+                            "username": username.lower(),
+                            "adspower_id": item["user_id"],
+                            "proxy_group": grp,
+                        })
+                        total += 1
+                        break
+
+            page_num += 1
+            time.sleep(1)
+
+        logger.info(f"Discovered {total} accounts across {len(by_group)} groups")
+        return by_group
+
+    def _rotate_proxy(self, group):
+        """Hit the proxy rotation URL for a fresh IP."""
+        url = self._rotation_urls.get(group, "")
+        if not url:
+            return
+        for attempt in range(3):
+            try:
+                resp = requests.get(url, timeout=15)
+                if resp.status_code == 200:
+                    logger.info(f"[{group}] Rotated proxy IP")
+                    time.sleep(5)
+                    return
+                logger.warning(f"[{group}] Rotation returned {resp.status_code}, retry {attempt+1}/3")
+            except Exception as e:
+                logger.warning(f"[{group}] Proxy rotation attempt {attempt+1}/3 failed: {e}")
+            time.sleep(3)
+        logger.error(f"[{group}] PROXY ROTATION FAILED after 3 attempts")
+
+    def _load_profile_data(self, username):
+        """Load persona/attributes from account_profiles.json if available."""
+        try:
+            with open(ACCOUNT_PROFILES_PATH, encoding="utf-8") as f:
+                profiles = json.load(f).get("profiles", {})
+            profile = profiles.get(username)
+            if not profile:
+                return {}, {}, None, None
+
+            persona = profile.get("persona", {})
+            attributes = profile.get("attributes", {})
+            raw_age = (profile.get("reddit_account", {}) or {}).get("age_days")
+            created_at = profile.get("created_at")
+            age_days = None
+            try:
+                if raw_age is not None:
+                    age_days = max(0, int(raw_age))
+            except Exception:
+                pass
+            if age_days is None and created_at:
+                try:
+                    dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                    now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+                    age_days = max(0, (now - dt).days)
+                except Exception:
+                    pass
+            return persona, attributes, age_days, created_at
+        except Exception:
+            return {}, {}, None, None
+
+    # -- Orchestration --
+
+    def _start_run_all(self):
+        """Button handler: validate state, launch orchestrator thread."""
+        if self._run_all_active or self.is_running:
+            messagebox.showwarning("Busy", "A warmup is already running.")
+            return
+
+        grok_key = self._grok_key
+        if not grok_key:
+            messagebox.showerror("Error", "No Grok API key found in config/api_keys.json")
+            return
+
+        self._run_all_active = True
+        self._run_all_stop = False
+        self._group_results = {}
+        self._group_warmers = {}
+        self._group_threads = {}
+
+        # UI state
+        self.run_all_btn.configure(state="disabled", text="Running All...")
+        self.stop_all_btn.configure(state="normal")
+        self.start_btn.configure(state="disabled")
+        self.log_box.delete("1.0", "end")
+        self._reset_session_stats()
+
+        # Reset group labels
+        for grp, lbl in self._group_labels.items():
+            lbl.configure(text=f"{grp}: discovering...")
+        self._run_all_overall_label.configure(text="Discovering accounts...")
+
+        thread = threading.Thread(target=self._run_all_orchestrator,
+                                  args=(grok_key,), daemon=True)
+        thread.start()
+
+    def _run_all_orchestrator(self, grok_key):
+        """Background thread: discover accounts, load configs, launch group threads, wait."""
+        self.app.after(0, self._log, "=== RUN ALL ACCOUNTS ===")
+
+        # Discover accounts
+        self.app.after(0, self._log, "Discovering accounts from AdsPower...")
+        accounts_by_group = self._discover_all_accounts()
+        if not accounts_by_group:
+            self.app.after(0, self._log, "ERROR: No accounts found in AdsPower")
+            self.app.after(0, self._on_run_all_complete)
+            return
+
+        for grp, accs in sorted(accounts_by_group.items()):
+            self.app.after(0, self._log, f"  {grp}: {len(accs)} accounts")
+
+        # Load configs
+        self._ban_log = self._load_ban_log()
+        self._rotation_urls = self._load_rotation_urls()
+
+        permabanned = sum(1 for v in self._ban_log.values()
+                          if v.get("status") == "permaban")
+        if permabanned:
+            self.app.after(0, self._log, f"Skipping {permabanned} permabanned accounts")
+
+        self.app.after(0, self._log,
+                       f"Rotation URLs: {', '.join(self._rotation_urls.keys())}")
+        self.app.after(0, self._log,
+                       "Architecture: 1 thread per proxy group, sequential within group\n")
+
+        # Launch 1 thread per proxy group
+        for grp, accs in accounts_by_group.items():
+            if self._run_all_stop:
+                break
+            t = threading.Thread(target=self._run_group,
+                                 args=(grp, accs, grok_key), daemon=True)
+            self._group_threads[grp] = t
+            t.start()
+
+        # Wait for all group threads to finish
+        for grp, t in self._group_threads.items():
+            t.join()
+
+        self.app.after(0, self._on_run_all_complete)
+
+    def _run_group(self, group, accounts, grok_key):
+        """Process all accounts in one proxy group sequentially."""
+        results = []
+        self._group_results[group] = results
+
+        # Shuffle so accounts don't always run in the same order
+        shuffled = list(accounts)
+        random.shuffle(shuffled)
+
+        # Filter permabanned
+        active = [a for a in shuffled
+                  if self._ban_log.get(a["adspower_id"], {}).get("status") != "permaban"]
+
+        skipped = len(accounts) - len(active)
+        self.app.after(0, self._log,
+                       f"[{group}] Starting: {len(active)} accounts"
+                       f" ({skipped} permabanned)")
+        self.app.after(0, self._update_group_progress, group, 0, 0, len(active))
+
+        for i, acc in enumerate(active):
+            if self._run_all_stop:
+                self.app.after(0, self._log, f"[{group}] Stop requested — halting")
+                break
+
+            self.app.after(0, self._log,
+                           f"\n--- [{group}] {i+1}/{len(active)}: {acc['username']} ---")
+            self.app.after(0, self._update_group_progress, group, i + 1, i, len(active))
+
+            result = self._warmup_one_account(acc, group, grok_key)
+            results.append(result)
+
+            status = result.get("status", "?")
+            self.app.after(0, self._log,
+                           f"[{group}] {acc['username']}: {status}")
+            if status == "banned":
+                self.app.after(0, self._log,
+                               f"[{group}] {acc['username']}: BANNED — continuing")
+
+        done = len(results)
+        self.app.after(0, self._update_group_progress, group, done, done, len(active))
+        self.app.after(0, self._log, f"[{group}] Group done: {done} processed")
+
+    def _warmup_one_account(self, account, group, grok_key):
+        """Full per-account lifecycle: browser start → ban check → warmup → stop → rotate."""
+        profile_key = account["username"]
+        adspower_id = account["adspower_id"]
+        api_base = self.adspower_config.get(
+            "adspower_api_base", "http://localhost:50325")
+        api_key = self.adspower_config.get("api_key", "")
+
+        # Skip if permabanned
+        prev = self._ban_log.get(adspower_id, {})
+        if prev.get("status") == "permaban":
+            return {"profile": profile_key, "status": "skip_banned",
+                    "adspower_id": adspower_id, "proxy_group": group}
+
+        # Load optional profile data
+        persona_data, attributes, age_days, created_at = self._load_profile_data(profile_key)
+
+        # Start AdsPower browser
+        self.app.after(0, self._log, f"  Starting browser {adspower_id}...")
+        browser_started = False
+        try:
+            resp = requests.get(
+                f"{api_base}/api/v1/browser/start"
+                f"?user_id={adspower_id}&api_key={api_key}",
+                timeout=60,
+            )
+            data = resp.json()
+        except Exception as e:
+            return {"profile": profile_key, "status": "failed",
+                    "adspower_id": adspower_id, "error": str(e)}
+
+        if data.get("code") != 0:
+            return {"profile": profile_key, "status": "failed",
+                    "adspower_id": adspower_id, "error": str(data)}
+        ws_endpoint = data.get("data", {}).get("ws", {}).get("puppeteer")
+        if not ws_endpoint:
+            return {"profile": profile_key, "status": "failed",
+                    "adspower_id": adspower_id, "error": "no CDP endpoint"}
+        browser_started = True
+
+        from playwright.sync_api import sync_playwright
+        from core.account_warmer import AccountWarmer
+        from core.ban_detector import check_account_health, BanStatus
+
+        try:
+            with sync_playwright() as p:
+                # CDP connection with retries
+                browser = None
+                for attempt in range(5):
+                    try:
+                        browser = p.chromium.connect_over_cdp(ws_endpoint)
+                        break
+                    except Exception as e:
+                        if attempt < 4:
+                            wait = 2 * (attempt + 1)
+                            self.app.after(0, self._log,
+                                           f"  CDP retry in {wait}s... ({e})")
+                            time.sleep(wait)
+                        else:
+                            raise
+
+                ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+                all_pages = list(ctx.pages) if ctx else []
+
+                # Pick existing Reddit tab or first tab
+                page = None
+                for pg in all_pages:
+                    try:
+                        url = pg.url or ""
+                    except Exception:
+                        url = ""
+                    if "reddit.com" in url:
+                        page = pg
+                        break
+                if not page:
+                    page = all_pages[0] if all_pages else ctx.new_page()
+
+                # Close stale extra tabs
+                for pg in all_pages:
+                    if pg != page:
+                        try:
+                            pg.close()
+                        except Exception:
+                            pass
+
+                # === BAN CHECK ===
+                self.app.after(0, self._log, "  Checking account health...")
+                status, detail = check_account_health(page)
+
+                if status == BanStatus.ACCOUNT_SUSPENDED:
+                    self.app.after(0, self._log, f"  BANNED: {detail}")
+                    with self._run_all_lock:
+                        self._ban_log[adspower_id] = {
+                            "status": "permaban", "username": profile_key,
+                            "proxy_group": group, "detail": detail,
+                            "detected": datetime.now().isoformat(),
+                        }
+                    self._save_ban_log()
+                    return {"profile": profile_key, "status": "banned",
+                            "adspower_id": adspower_id, "detail": detail}
+
+                if status == BanStatus.SHADOW_BANNED:
+                    self.app.after(0, self._log, f"  SHADOW BANNED: {detail}")
+                    with self._run_all_lock:
+                        self._ban_log[adspower_id] = {
+                            "status": "shadowban", "username": profile_key,
+                            "proxy_group": group, "detail": detail,
+                            "detected": datetime.now().isoformat(),
+                        }
+                    self._save_ban_log()
+                    return {"profile": profile_key, "status": "shadowbanned",
+                            "adspower_id": adspower_id, "detail": detail}
+
+                if status == BanStatus.UNKNOWN_ERROR:
+                    if "not logged in" in detail:
+                        self.app.after(0, self._log, "  NOT LOGGED IN — skipping")
+                        return {"profile": profile_key, "status": "not_logged_in",
+                                "adspower_id": adspower_id, "proxy_group": group}
+                    crash_phrases = [
+                        "browser has been closed", "target page",
+                        "connection closed", "target closed",
+                        "session closed", "page has been closed",
+                    ]
+                    if any(phrase in detail.lower() for phrase in crash_phrases):
+                        self.app.after(0, self._log, f"  BROWSER CRASHED: {detail}")
+                        return {"profile": profile_key, "status": "browser_crashed",
+                                "adspower_id": adspower_id, "error": detail}
+                    self.app.after(0, self._log,
+                                   f"  Health check issue: {detail} — proceeding")
+
+                self.app.after(0, self._log, f"  Account healthy: {detail}")
+
+                # === WARMUP ===
+                warmer = AccountWarmer(
+                    adspower_id, page,
+                    persona=persona_data or None,
+                    attributes=attributes or None,
+                    grok_api_key=grok_key,
+                    account_age_days=age_days,
+                    account_created_at=created_at,
+                    username=profile_key,
+                )
+                self._group_warmers[group] = warmer
+
+                if self._run_all_stop:
+                    warmer.stop_requested = True
+
+                # Attach log handler
+                warmer_logger = logging.getLogger("core.account_warmer")
+                handler = _GUILogHandler(self.log_box, self.app)
+                handler.setFormatter(logging.Formatter(
+                    "%(asctime)s %(message)s", datefmt="%H:%M:%S"))
+                warmer_logger.addHandler(handler)
+
+                try:
+                    stats = warmer.run_daily_warmup()
+                finally:
+                    try:
+                        warmer_logger.removeHandler(handler)
+                    except Exception:
+                        pass
+                    self._group_warmers[group] = None
+
+                self.app.after(0, self._log,
+                               f"  DONE — {stats['comments']}cmt, {stats['upvotes']}up, "
+                               f"{stats['joins']}join, {stats['total_sec']//60}m")
+
+                # Clear non-permaban entries on success
+                with self._run_all_lock:
+                    if adspower_id in self._ban_log and \
+                       self._ban_log[adspower_id].get("status") != "permaban":
+                        del self._ban_log[adspower_id]
+                self._save_ban_log()
+
+                return {"profile": profile_key, "status": "success",
+                        "adspower_id": adspower_id, "proxy_group": group,
+                        "stats": stats}
+
+        except Exception as e:
+            err_str = str(e).lower()
+            crash_phrases = ["browser has been closed", "target page",
+                             "connection closed", "target closed",
+                             "session closed", "page has been closed"]
+            if any(phrase in err_str for phrase in crash_phrases):
+                self.app.after(0, self._log, f"  BROWSER CRASHED: {e}")
+                return {"profile": profile_key, "status": "browser_crashed",
+                        "adspower_id": adspower_id, "error": str(e)}
+            self.app.after(0, self._log, f"  Warmup error: {e}")
+            return {"profile": profile_key, "status": "error",
+                    "adspower_id": adspower_id, "error": str(e)}
+        finally:
+            # 1. Close browser FIRST
+            if browser_started:
+                try:
+                    requests.get(
+                        f"{api_base}/api/v1/browser/stop"
+                        f"?user_id={adspower_id}&api_key={api_key}",
+                        timeout=15,
+                    )
+                    self.app.after(0, self._log, "  Browser stopped")
+                except Exception as e:
+                    self.app.after(0, self._log, f"  Failed to stop browser: {e}")
+
+            # 2. Rotate proxy AFTER browser closed — guaranteed every time
+            time.sleep(10)
+            self._rotate_proxy(group)
+
+    def _stop_run_all(self):
+        """Stop all running warmups gracefully."""
+        self._run_all_stop = True
+        self.stop_all_btn.configure(state="disabled")
+        self.app.after(0, self._log, "Stop All requested — finishing current accounts...")
+        # Signal any active warmers to stop
+        for grp, warmer in self._group_warmers.items():
+            if warmer:
+                warmer.stop_requested = True
+
+    def _on_run_all_complete(self):
+        """Re-enable buttons and show summary (runs on main thread)."""
+        self._run_all_active = False
+        self._run_all_stop = False
+        self.run_all_btn.configure(state="normal",
+                                   text="Start All Accounts (Auto-Discover from AdsPower)")
+        self.stop_all_btn.configure(state="disabled")
+        self.start_btn.configure(state="normal")
+
+        # Summarize results
+        all_results = []
+        for grp, results in self._group_results.items():
+            all_results.extend(results)
+
+        by_status = {}
+        for r in all_results:
+            s = r.get("status", "unknown")
+            by_status.setdefault(s, []).append(r.get("profile", "?"))
+
+        self._log("\n=== RUN ALL COMPLETE ===")
+        for status, names in sorted(by_status.items()):
+            self._log(f"  {status}: {len(names)}")
+            if status in ("banned", "shadowbanned", "not_logged_in",
+                          "browser_crashed", "error"):
+                for n in names:
+                    self._log(f"    - {n}")
+
+        total = len(all_results)
+        success = len(by_status.get("success", []))
+        banned = len(by_status.get("banned", []))
+        errors = len(by_status.get("error", []))
+        self._run_all_overall_label.configure(
+            text=f"Done — {success}/{total} success, {banned} banned, {errors} errors")
+
+        # Save final ban log
+        self._save_ban_log()
+
+    def _update_group_progress(self, group, current, done, total):
+        """Update a group's status label (called via app.after from worker threads)."""
+        if group in self._group_labels:
+            self._group_labels[group].configure(text=f"{group}: {done}/{total}")
+        # Update overall label
+        total_all = 0
+        done_all = 0
+        banned_all = 0
+        for grp, results in self._group_results.items():
+            done_all += len(results)
+            banned_all += sum(1 for r in results if r.get("status") == "banned")
+        for grp, accs in self._group_results.items():
+            pass  # count is already in done_all
+        self._run_all_overall_label.configure(
+            text=f"Running — {done_all} done, {banned_all} banned")

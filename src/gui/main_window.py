@@ -29,7 +29,11 @@ try:
 except ImportError:
     AUTO_POSTER_AVAILABLE = False
 
-WARMUP_TAB_AVAILABLE = False  # Warmup is now integrated into AutoPosterTab
+try:
+    from gui.warmup_tab import WarmupTab
+    WARMUP_TAB_AVAILABLE = True
+except ImportError:
+    WARMUP_TAB_AVAILABLE = False
 
 
 class GifMakeApp(ctk.CTk):
@@ -137,6 +141,20 @@ class GifMakeApp(ctk.CTk):
         reddit_tab = self.tabview.add("Reddit")
         reddit_tab.grid_columnconfigure(0, weight=1)
         reddit_tab.grid_rowconfigure(0, weight=1)
+
+        # Tab 3: Warmup (standalone multi-account warmup with proxy rotation)
+        if WARMUP_TAB_AVAILABLE:
+            warmup_tab = self.tabview.add("Warmup")
+            warmup_tab.grid_columnconfigure(0, weight=1)
+            warmup_tab.grid_rowconfigure(0, weight=1)
+            warmup_scroll = ctk.CTkScrollableFrame(
+                warmup_tab, fg_color="transparent", corner_radius=0)
+            warmup_scroll.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+            warmup_scroll.grid_columnconfigure(0, weight=1)
+            warmup_frame = ctk.CTkFrame(warmup_scroll, fg_color="transparent")
+            warmup_frame.grid(row=0, column=0, sticky="nsew", padx=30, pady=20)
+            warmup_frame.grid_columnconfigure(0, weight=1)
+            self.warmup_tab = WarmupTab(warmup_frame, self)
 
         # Create scrollable container inside the converter tab
         self.scroll_container = ctk.CTkScrollableFrame(
