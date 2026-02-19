@@ -24,7 +24,7 @@ import base64
 import requests
 from datetime import datetime
 
-from core.post_history import init_warmup, record_activity
+from core.post_history import init_warmup, record_activity, record_session
 
 logger = logging.getLogger(__name__)
 
@@ -388,7 +388,7 @@ class AccountWarmer:
     def __init__(self, profile_id, page, persona=None, attributes=None,
                  grok_api_key=None,
                  account_age_days=None, account_created_at=None,
-                 username=None):
+                 username=None, poetry_warmup=False, karma_target=1500):
         """
         Args:
             profile_id: AdsPower profile ID
@@ -399,6 +399,9 @@ class AccountWarmer:
             account_age_days: Optional reddit account age (days since creation)
             account_created_at: Optional ISO datetime for reddit account creation
             username: Reddit username for this account
+            poetry_warmup: If True, all comments are poems replying to top
+                comments for fast karma farming. Auto-disables at karma_target.
+            karma_target: Karma threshold to auto-disable poetry mode (default 1500)
         """
         self.profile_id = profile_id
         self.page = page
@@ -433,6 +436,13 @@ class AccountWarmer:
         self._feed_url = "https://www.reddit.com/r/popular"  # Default, updated per session
         self.stop_requested = False
 
+        # Human pacing guardrails. This prevents rapid-fire action chains.
+        self._wait_scale = random.uniform(1.35, 1.75)
+        self._min_wait_ms = random.randint(1000, 1800)
+        self._min_action_gap_sec = random.uniform(1.8, 2.8)
+        self._max_action_gap_sec = random.uniform(3.2, 5.2)
+        self._last_action_ts = 0.0
+
         # Track clicked post URLs to avoid re-clicking the same post
         self._clicked_urls = set()
 
@@ -460,12 +470,60 @@ class AccountWarmer:
         # {type, sub, url, text, status, ts}
         self.action_log = []
 
+        # Poetry warmup mode: fast karma farming via poem replies to top comments
+        self.poetry_warmup = poetry_warmup
+        self.karma_target = karma_target
+        self._poetry_subs = []  # Assigned SFW subs for this account
+        if self.poetry_warmup:
+            self._poetry_subs = self._load_poetry_subs()
+            # Poetry mode: more aggressive commenting (5-8 poems per run)
+            self._run_caps["comments"] = random.randint(5, 8)
+            # Higher click-through rate to find more posts to comment on
+            self.probs["click_post"] = random.uniform(0.25, 0.35)
+            self.probs["top_level_comment"] = random.uniform(0.40, 0.55)
+            logger.info(f"Poetry warmup ON: {len(self._poetry_subs)} assigned subs, "
+                        f"karma target: {self.karma_target}, "
+                        f"comment cap: {self._run_caps['comments']}")
+
         phase = (1 if self.day <= 3 else 2 if self.day <= 7
                  else 3 if self.day <= 14 else 4 if self.day <= 21 else 5)
         logger.info(f"Warmer init: day {self.day} (phase {phase}), "
                     f"caps: {self._run_caps}, "
                     f"{len(self.general_subs)} general subs, "
                     f"grok={'yes' if self.grok_api_key else 'no'}")
+        logger.info(
+            "Human pacing: wait_scale=%.2fx, min_wait=%dms, action_gap=%.1f-%.1fs",
+            self._wait_scale, self._min_wait_ms,
+            self._min_action_gap_sec, self._max_action_gap_sec
+        )
+
+    def _load_poetry_subs(self):
+        """Load SFW sub pool and assign a random subset for this account.
+
+        Each account gets 30-50 random subs from the pool of ~800 to ensure
+        multiple accounts don't all browse the same feeds.
+        """
+        pool_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "config", "top_sfw_subs.json"
+        )
+        try:
+            with open(pool_path, "r") as f:
+                all_subs = json.load(f)
+            # Assign 30-50 random subs to this account
+            count = min(random.randint(30, 50), len(all_subs))
+            assigned = random.sample(all_subs, count)
+            logger.info(f"Poetry subs: {count} assigned from pool of {len(all_subs)}")
+            return assigned
+        except Exception as e:
+            logger.warning(f"Failed to load poetry sub pool: {e}")
+            # Fallback to high-engagement defaults
+            return [
+                "AskReddit", "funny", "mildlyinteresting", "todayilearned",
+                "Showerthoughts", "pics", "aww", "gaming", "movies", "music",
+                "food", "cats", "dogs", "memes", "nottheonion", "tifu",
+                "interestingasfuck", "nextfuckinglevel", "MadeMeSmile",
+                "wholesomememes", "Damnthatsinteresting", "oddlysatisfying",
+            ]
 
     def _vote_allowed(self):
         """Check if vote cap hasn't been reached."""
@@ -562,13 +620,35 @@ class AccountWarmer:
 
     def _wait_for_timeout(self, ms):
         """Interruptible version of Playwright wait_for_timeout()."""
-        remaining = max(0, int(ms))
+        if ms and ms > 0:
+            scaled = int(ms * self._wait_scale * random.uniform(0.9, 1.15))
+            remaining = max(self._min_wait_ms, scaled)
+        else:
+            remaining = max(0, int(ms))
         while remaining > 0:
             if self.stop_requested:
                 return False
             chunk = min(500, remaining)
             self.page.wait_for_timeout(chunk)
             remaining -= chunk
+        return not self.stop_requested
+
+    def _pre_action_pause(self):
+        """Enforce a human-like gap before high-impact actions."""
+        now = time.time()
+        target_gap = random.uniform(self._min_action_gap_sec, self._max_action_gap_sec)
+        elapsed = now - self._last_action_ts
+        if elapsed < target_gap:
+            wait_ms = int((target_gap - elapsed) * 1000)
+            if not self._wait_for_timeout(wait_ms):
+                return False
+
+        # Occasional hesitation similar to rereading/rechecking before acting.
+        if random.random() < 0.35:
+            if not self._wait_for_timeout(random.randint(600, 1800)):
+                return False
+
+        self._last_action_ts = time.time()
         return not self.stop_requested
 
     def _log_action(self, action_type, sub="", url="", text="", status="ok",
@@ -670,7 +750,7 @@ class AccountWarmer:
     # â"€â"€ Main entry point â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     def run_daily_warmup(self, target_subs=None, session_minutes=None,
-                         max_comments=None):
+                         max_comments=None, remaining_budget=None):
         """Run age-scaled browsing sessions, return activity stats.
 
         Args:
@@ -683,10 +763,14 @@ class AccountWarmer:
                              of the auto-calculated multi-session plan.
             max_comments: Stop the session after this many comments.
                           0 or None = unlimited (time-based only).
+            remaining_budget: Optional dict {"comments": int, "joins": int}
+                              with remaining daily budget. Per-run caps are
+                              clamped to not exceed this.
 
         Returns:
             dict with activity counts
         """
+        self._run_started_at = datetime.now().isoformat()
         self.stats = {
             "upvotes": 0, "downvotes": 0, "comments": 0,
             "joins": 0, "posts_clicked": 0, "subs_browsed": 0,
@@ -697,6 +781,19 @@ class AccountWarmer:
         # Reset sub rotation tracking per run
         self._last_comment_sub = None
         self._sub_comment_counts = {}
+
+        # Clamp per-run caps to remaining daily budget
+        if remaining_budget:
+            orig_c = self._run_caps["comments"]
+            orig_j = self._run_caps["joins"]
+            self._run_caps["comments"] = min(
+                orig_c, remaining_budget.get("comments", 999))
+            self._run_caps["joins"] = min(
+                orig_j, remaining_budget.get("joins", 999))
+            if self._run_caps["comments"] != orig_c or self._run_caps["joins"] != orig_j:
+                logger.info(
+                    f"Budget-clamped caps: comments {orig_c}->{self._run_caps['comments']}, "
+                    f"joins {orig_j}->{self._run_caps['joins']}")
 
         if session_minutes:
             # Manual override: single session of specified length
@@ -744,6 +841,14 @@ class AccountWarmer:
         record_activity(self.profile_id, "comments", self.stats["comments"])
         record_activity(self.profile_id, "joins", self.stats["joins"])
 
+        # Record this session for per-run/daily/weekly stats
+        record_session(
+            self.profile_id,
+            started_at=self._run_started_at,
+            finished_at=datetime.now().isoformat(),
+            stats=self.stats,
+        )
+
         # Capture profile karma + screenshot before closing
         karma_data = self._capture_profile_karma()
         if karma_data:
@@ -768,12 +873,29 @@ class AccountWarmer:
         start = time.time()
         self._clicked_urls = set()  # Reset per session
 
-        # Feed URL candidates â€” try in order until one has posts
-        feed_candidates = [
-            "https://www.reddit.com",
-            "https://www.reddit.com/r/popular",
-            "https://www.reddit.com/r/all",
-        ]
+        # Feed URL candidates â€" try in order until one has posts
+        if self.poetry_warmup and self._poetry_subs:
+            # Poetry mode: browse specific subs (rising/hot) for variety
+            session_subs = random.sample(
+                self._poetry_subs, min(random.randint(3, 5), len(self._poetry_subs))
+            )
+            # Mix of /rising and /hot — rising has fewer posts but higher ROI
+            feed_candidates = []
+            for sub in session_subs:
+                sort = random.choice(["rising", "hot", "hot"])  # 2:1 hot vs rising
+                feed_candidates.append(f"https://www.reddit.com/r/{sub}/{sort}")
+            # Always include one general feed as fallback
+            feed_candidates.append(random.choice([
+                "https://www.reddit.com/r/popular",
+                "https://www.reddit.com/r/all",
+            ]))
+            logger.info(f"Poetry session subs: {session_subs}")
+        else:
+            feed_candidates = [
+                "https://www.reddit.com",
+                "https://www.reddit.com/r/popular",
+                "https://www.reddit.com/r/all",
+            ]
         random.shuffle(feed_candidates)
 
         feed_url = None
@@ -814,7 +936,7 @@ class AccountWarmer:
             try:
                 # Scroll down
                 self.page.mouse.wheel(0, random.randint(300, 700))
-                self._wait_for_timeout(random.randint(1500, 4000))
+                self._wait_for_timeout(random.randint(1800, 4500))
                 scroll_count += 1
 
                 elapsed_min = (time.time() - start) / 60
@@ -833,11 +955,22 @@ class AccountWarmer:
                     empty_feed_count += 1
                     if empty_feed_count >= 5:
                         # Try alternative feed URLs, not just the same one
-                        alt_feeds = [
-                            "https://www.reddit.com",
-                            "https://www.reddit.com/r/popular",
-                            "https://www.reddit.com/r/all",
-                        ]
+                        if self.poetry_warmup and self._poetry_subs:
+                            # Poetry mode: try different subs from pool
+                            alt_subs = random.sample(
+                                self._poetry_subs,
+                                min(3, len(self._poetry_subs))
+                            )
+                            alt_feeds = [
+                                f"https://www.reddit.com/r/{s}/hot"
+                                for s in alt_subs
+                            ]
+                        else:
+                            alt_feeds = [
+                                "https://www.reddit.com",
+                                "https://www.reddit.com/r/popular",
+                                "https://www.reddit.com/r/all",
+                            ]
                         recovered = False
                         for alt in alt_feeds:
                             logger.info(f"  Stale feed, trying {alt}...")
@@ -867,7 +1000,25 @@ class AccountWarmer:
                 if random.random() < random.uniform(0.10, 0.20):
                     self._jitter_mouse()
 
-                # â”€â”€ Vote on a post title (without clicking in) â”€â”€â”€â”€â”€â”€â”€â”€
+                # Poetry mode: hop to a new sub every 15-25 scrolls for variety
+                if (self.poetry_warmup and self._poetry_subs
+                        and scroll_count > 0 and scroll_count % random.randint(15, 25) == 0):
+                    new_sub = random.choice(self._poetry_subs)
+                    sort = random.choice(["hot", "hot", "rising"])
+                    new_url = f"https://www.reddit.com/r/{new_sub}/{sort}"
+                    logger.info(f"  Poetry sub-hop: navigating to r/{new_sub}/{sort}")
+                    try:
+                        self.page.goto(new_url, timeout=15000,
+                                       wait_until="domcontentloaded")
+                        self._wait_for_timeout(random.randint(2000, 4000))
+                        dismiss_over18(self.page)
+                        feed_url = new_url
+                        self._feed_url = new_url
+                        self._clicked_urls = set()  # Reset for new sub
+                    except Exception as e:
+                        logger.info(f"  Sub-hop failed: {e}")
+
+                # â"€â"€ Vote on a post title (without clicking in) â"€â"€â"€â"€â"€â"€â"€â"€
                 # Daily cap: end session early if all caps hit
                 if self._all_caps_hit():
                     logger.info("All daily caps reached, ending session early")
@@ -917,6 +1068,8 @@ class AccountWarmer:
         The JS checks aria-pressed !== 'true' so already-voted posts are skipped.
         """
         try:
+            if not self._pre_action_pause():
+                return
             is_upvote = random.random() < self._vote_ratio
             btn_text = "Upvote" if is_upvote else "Downvote"
 
@@ -966,7 +1119,7 @@ class AccountWarmer:
                     self.stats["downvotes"] += 1
                     logger.info(f"  Feed vote: downvote on post {idx} (total: {self.stats['downvotes']})")
                 self._log_action(vote_type, text=f"Feed post #{idx}")
-                self._wait_for_timeout(random.randint(200, 600))
+                self._wait_for_timeout(random.randint(700, 1600))
             else:
                 logger.info(f"  Feed vote: could not click {btn_text} on post {idx}")
                 self._screenshot_error("feed_vote_no_btn", f"post #{idx} btn={btn_text}")
@@ -985,6 +1138,8 @@ class AccountWarmer:
         """
         from uploaders.reddit.reddit_poster_playwright import dismiss_over18
         try:
+            if not self._pre_action_pause():
+                return
             posts = self.page.locator('a[slot="full-post-link"]')
             count = posts.count()
             if count < 2:
@@ -1035,7 +1190,12 @@ class AccountWarmer:
                 return
 
             self.stats["posts_clicked"] += 1
-            self._wait_for_timeout(random.randint(2000, 5000))
+            # Wait for SPA navigation to complete (URL changes to /comments/)
+            try:
+                self.page.wait_for_url("**/comments/**", timeout=8000)
+            except Exception:
+                pass  # Lightbox or slow load — proceed anyway
+            self._wait_for_timeout(random.randint(500, 1500))
             dismiss_over18(self.page)
 
             # Get post context
@@ -1079,16 +1239,15 @@ class AccountWarmer:
             if self._join_allowed() and random.random() < self.probs["check_sub"] and current_sub:
                 self._browse_and_maybe_join_sub(current_sub)
             else:
-                # Go back to feed â€” try go_back first (faster, keeps DOM),
-                # fall back to explicit goto if we end up off-feed
-                self.page.go_back()
-                self._wait_for_timeout(random.randint(1500, 3000))
-                # Verify we're on the feed (has post links)
-                if self.page.locator('shreddit-post').count() < 2:
+                # Go back to feed — SPA-aware: domcontentloaded + element wait
+                self.page.go_back(wait_until="domcontentloaded")
+                try:
+                    self.page.locator('shreddit-post').first.wait_for(timeout=8000)
+                except Exception:
                     logger.info("  go_back didn't reach feed, using goto")
                     self.page.goto(self._feed_url, timeout=15000,
                                    wait_until="domcontentloaded")
-                    self._wait_for_timeout(random.randint(1500, 3000))
+                self._wait_for_timeout(random.randint(500, 1500))
 
         except Exception as e:
             logger.info(f"  Explore post error: {e}")
@@ -1108,6 +1267,8 @@ class AccountWarmer:
         The main post's vote buttons are in shreddit-post shadow DOM.
         """
         try:
+            if not self._pre_action_pause():
+                return
             is_upvote = random.random() < self._vote_ratio
             btn_text = "Upvote" if is_upvote else "Downvote"
 
@@ -1137,7 +1298,7 @@ class AccountWarmer:
                     self.stats["downvotes"] += 1
                     logger.info(f"  Post vote: downvote on r/{sub}")
                 self._log_action(vote_type, sub=sub, url=self.page.url)
-                self._wait_for_timeout(random.randint(200, 800))
+                self._wait_for_timeout(random.randint(700, 1700))
             else:
                 logger.info(f"  Post vote: {btn_text} button not found in shadow DOM")
                 self._screenshot_error("post_vote_no_btn", f"btn={btn_text}")
@@ -1155,6 +1316,8 @@ class AccountWarmer:
         which is a light DOM child of shreddit-comment.
         """
         try:
+            if not self._pre_action_pause():
+                return
             comments = self.page.locator('shreddit-comment')
             comment_count = comments.count()
             if comment_count < 1:
@@ -1193,7 +1356,7 @@ class AccountWarmer:
                 logger.info(f"  Comment vote: {btn_text.lower()} on comment {idx}")
                 self._log_action(vote_type, sub=self._get_current_sub(),
                                  url=self.page.url, text=f"Comment #{idx}")
-                self._wait_for_timeout(random.randint(300, 800))
+                self._wait_for_timeout(random.randint(800, 1800))
 
             # Maybe reply to a comment (only if vote succeeded and not in cooldown)
             if (clicked and not skip_reply
@@ -1250,6 +1413,9 @@ class AccountWarmer:
         if not self.grok_api_key:
             return
 
+        if not self._pre_action_pause():
+            return
+
         # Skip sensitive topics — too risky for factual errors or insensitivity
         top_comments = self._get_top_comments(3)
         if self._should_skip_topic(post_title, top_comments):
@@ -1259,10 +1425,12 @@ class AccountWarmer:
         sentiment = random.choice(["positive", "positive", "positive", "agree", "neutral"])
         media_type = self._get_post_media_type()
 
-        # Video posts: always hijack (we read comments to understand the video)
+        # Poetry mode: always hijack top comment (that's the whole strategy)
+        # Video posts: always hijack (can't see the video, so riff off comments)
         # Image/text posts: use hijack_ratio slider
         should_hijack = (
-            media_type == "video"
+            self.poetry_warmup
+            or media_type == "video"
             or random.random() < self.hijack_ratio
         )
 
@@ -1307,6 +1475,8 @@ class AccountWarmer:
         from uploaders.reddit.reddit_poster_playwright import dismiss_over18
 
         try:
+            if not self._pre_action_pause():
+                return
             logger.info(f"Checking out r/{sub_name}")
             self.page.goto(
                 f"https://www.reddit.com/r/{sub_name}", timeout=30000,
@@ -1326,6 +1496,8 @@ class AccountWarmer:
                 posts = self.page.locator('a[slot="full-post-link"]')
                 post_count = posts.count()
                 if post_count > 2:
+                    if not self._pre_action_pause():
+                        return
                     idx = random.randint(0, min(post_count - 1, 7))
                     # JS click to avoid image overlay interception
                     self.page.evaluate(
@@ -1335,7 +1507,12 @@ class AccountWarmer:
                         }""",
                         idx
                     )
-                    self._wait_for_timeout(random.randint(3000, 6000))
+                    # Wait for SPA navigation instead of fixed timeout
+                    try:
+                        self.page.wait_for_url("**/comments/**", timeout=8000)
+                    except Exception:
+                        pass
+                    self._wait_for_timeout(random.randint(500, 1500))
                     dismiss_over18(self.page)
 
                     # Scroll the post
@@ -1347,8 +1524,12 @@ class AccountWarmer:
                     if random.random() < random.uniform(0.20, 0.40):
                         self._vote_on_current_post()
 
-                    self.page.go_back()
-                    self._wait_for_timeout(random.randint(1500, 3000))
+                    self.page.go_back(wait_until="domcontentloaded")
+                    try:
+                        self.page.locator('shreddit-post').first.wait_for(timeout=8000)
+                    except Exception:
+                        pass
+                    self._wait_for_timeout(random.randint(500, 1500))
 
             # Maybe sort by Top All Time (very natural new-sub behavior)
             if random.random() < random.uniform(0.15, 0.35):
@@ -1372,6 +1553,8 @@ class AccountWarmer:
                         'button:has-text("Join"):not(:has-text("Joined"))'
                     )
                     if join_btn.count() > 0 and join_btn.first.is_visible():
+                        if not self._pre_action_pause():
+                            return
                         join_btn.first.click()
                         self.stats["joins"] += 1
                         logger.info(f"Joined r/{sub_name}")
@@ -1381,10 +1564,11 @@ class AccountWarmer:
                 except Exception:
                     pass
 
-            # Return to feed (explicit navigation, not go_back)
+            # Return to feed — must use goto here since history stack
+            # may be deep (feed → post → sub → top/all)
             self.page.goto(self._feed_url, timeout=15000,
                            wait_until="domcontentloaded")
-            self._wait_for_timeout(random.randint(1500, 3000))
+            self._wait_for_timeout(random.randint(500, 1500))
 
         except Exception as e:
             logger.info(f"  Sub browse error: {e}")
@@ -1452,12 +1636,15 @@ class AccountWarmer:
                 f'Your reaction: {sentiment}'
             )
 
-        # Pick a comment style weighted toward high-karma types
-        styles = random.choices(
-            ["pun", "sarcasm", "absurd", "anecdote", "helpful", "question", "react"],
-            weights=[20, 20, 10, 15, 20, 10, 5],
-            k=1,
-        )[0]
+        # Pick a comment style — poetry mode forces poetry, normal uses weights
+        if self.poetry_warmup:
+            styles = "poetry"
+        else:
+            styles = random.choices(
+                ["pun", "sarcasm", "absurd", "anecdote", "helpful", "question", "react"],
+                weights=[20, 20, 10, 15, 20, 10, 5],
+                k=1,
+            )[0]
 
         # Store for action_log attribution
         self._last_comment_style = styles
@@ -1547,6 +1734,46 @@ class AccountWarmer:
                 '  "i was not prepared for that ending"\n'
                 '  "the dedication here is honestly impressive"\n'
             ),
+            "poetry": (
+                "Write a SHORT POEM (4-8 lines) as your Reddit comment.\n"
+                "Output ONLY the poem. No intro like 'Here's a poem:' or any preamble.\n\n"
+                "STRUCTURE:\n"
+                "- 4-8 lines, in 1-2 stanzas (separate stanzas with a blank line)\n"
+                "- Ballad meter: alternate lines of ~8 syllables and ~6 syllables\n"
+                "- Rhyme scheme: ABCB — lines 2 and 4 rhyme. Lines 1 and 3 don't have to\n"
+                "- The LAST LINE is the most important — it must be a punchline, twist, or emotional gut-punch\n\n"
+                "CONTENT:\n"
+                "- Use at least ONE specific concrete detail from the post or comment you're replying to\n"
+                "- Match the tone: funny post = funny poem, touching post = touching poem\n"
+                "- Simple vocabulary. Conversational. Use real contractions (it's, won't, they're)\n"
+                "- Lowercase lines are fine — don't over-capitalize\n\n"
+                "BANNED (these are AI poetry tells):\n"
+                "- Words: heart, soul, tears, dream, shine, light, journey, weave, tapestry, whisper, shimmer, cascade, embrace, cherish, beacon, unfold\n"
+                "- Line starters: Oh, Ah, Alas, And so, In the\n"
+                "- More than one em-dash (—) per poem\n"
+                "- Ending with a moral or lesson. End with a PUNCH, not a lecture\n\n"
+                "EXAMPLES (study the rhythm and punch):\n\n"
+                "Animal got into something:\n"
+                "  He'd watched it for weeks from the hallway,\n"
+                "  The lid with its vulnerable seam.\n"
+                "  At three in the morning he opened it.\n"
+                "  Cold chicken. The ultimate dream.\n\n"
+                "Relatable fail:\n"
+                "  I told myself just one more minute,\n"
+                "  I'd said that at quarter to nine.\n"
+                "  The sun rose and found me still clicking.\n"
+                "  The tab count had reached thirty-nine.\n\n"
+                "Heartwarming:\n"
+                "  She practiced the words every morning,\n"
+                "  She'd say them three times in the hall.\n"
+                "  And nobody knew she was nervous —\n"
+                "  She walked in and nailed the whole call.\n\n"
+                "Absurd:\n"
+                "  He looked at the keyboard with interest,\n"
+                "  One paw raised in purposeful thought.\n"
+                "  He typed out his first resignation.\n"
+                "  His humans were cheaper than bought.\n"
+            ),
         }
 
         if sentiment in ("agree", "positive"):
@@ -1610,8 +1837,8 @@ class AccountWarmer:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},
                     ],
-                    "temperature": 1.0 if styles in ("pun", "sarcasm", "absurd") else 0.9,
-                    "max_tokens": 150,
+                    "temperature": 1.1 if styles == "poetry" else (1.0 if styles in ("pun", "sarcasm", "absurd") else 0.9),
+                    "max_tokens": 300 if styles == "poetry" else 150,
                 },
                 timeout=45,
             )
@@ -1620,11 +1847,12 @@ class AccountWarmer:
                 return None
 
             comment = resp.json()["choices"][0]["message"]["content"].strip()
-            comment = self._clean_comment(comment)
+            comment = self._clean_comment(comment, is_poetry=(styles == "poetry"))
             if comment is None:
                 return None
 
-            logger.info(f"Grok comment ({sentiment}): '{comment}'")
+            log_label = "Grok poem" if styles == "poetry" else "Grok comment"
+            logger.info(f"{log_label} ({sentiment}): '{comment}'")
             return comment
 
         except Exception as e:
@@ -1638,8 +1866,14 @@ class AccountWarmer:
         "spot on", "resonate", "resonates", "resonating",
         "lowkey fire", "slaps", "hits different",
     ]
+    # Extra banned words for poetry mode (AI poetry tells)
+    _POETRY_BANNED_WORDS = [
+        "weave", "tapestry", "whispers", "whisper", "shimmer",
+        "cascade", "unfold", "embrace", "cherish", "beacon",
+        "beckon", "ethereal", "celestial", "luminous",
+    ]
 
-    def _clean_comment(self, comment):
+    def _clean_comment(self, comment, is_poetry=False):
         """Post-process a Grok-generated comment.
 
         Strips prefixes, caps length, and rejects banned words.
@@ -1648,26 +1882,46 @@ class AccountWarmer:
         # Strip wrapping quotes
         comment = comment.strip('"\'')
         # Remove "Comment:" or similar prefix
-        for prefix in ["Comment:", "Reply:", "comment:", "reply:"]:
+        for prefix in ["Comment:", "Reply:", "comment:", "reply:",
+                        "Poem:", "poem:", "Here's a poem:", "here's a poem:"]:
             if comment.startswith(prefix):
                 comment = comment[len(prefix):].strip()
-        # Cap length — short punchy comments outperform walls of text
-        if len(comment) > 200:
-            cut = comment[:200].rfind('.')
-            if cut > 80:
-                comment = comment[:cut + 1]
-            else:
-                # Try cutting at last comma or space
-                cut = comment[:200].rfind(',')
-                if cut > 80:
+        # Cap length — poems get more room (500 chars), prose stays at 200
+        max_len = 500 if is_poetry else 200
+        if len(comment) > max_len:
+            if is_poetry:
+                # For poetry, cut at last newline before limit to preserve stanza structure
+                cut = comment[:max_len].rfind('\n')
+                if cut > 100:
                     comment = comment[:cut]
                 else:
-                    comment = comment[:200]
+                    comment = comment[:max_len]
+            else:
+                cut = comment[:max_len].rfind('.')
+                if cut > 80:
+                    comment = comment[:cut + 1]
+                else:
+                    cut = comment[:max_len].rfind(',')
+                    if cut > 80:
+                        comment = comment[:cut]
+                    else:
+                        comment = comment[:max_len]
         # Reject if it contains banned words
         lower = comment.lower()
         for word in self._BANNED_WORDS:
             if word in lower:
                 logger.info(f"  Rejected comment (banned word '{word}'): '{comment[:60]}'")
+                return None
+        # Poetry-specific banned words
+        if is_poetry:
+            for word in self._POETRY_BANNED_WORDS:
+                if word in lower:
+                    logger.info(f"  Rejected poem (AI tell '{word}'): '{comment[:60]}'")
+                    return None
+            # Reject poems starting with "Oh " or "Ah " (top AI poetry tell)
+            first_line = comment.split('\n')[0].strip()
+            if first_line.startswith(("Oh ", "Ah ", "Alas")):
+                logger.info(f"  Rejected poem (starts with Oh/Ah/Alas): '{first_line[:40]}'")
                 return None
         return comment
 
@@ -1709,6 +1963,8 @@ class AccountWarmer:
     def _type_and_submit_comment(self, comment):
         """Find the top-level comment box, type comment, submit."""
         try:
+            if not self._pre_action_pause():
+                return False
             # Step 1: Activate the composer (it starts collapsed)
             if not self._activate_comment_composer():
                 logger.info("  Comment: no composer trigger found")
@@ -1730,9 +1986,9 @@ class AccountWarmer:
 
             # Step 3: Type with human-like timing
             for char in comment:
-                self.page.keyboard.type(char, delay=random.randint(30, 120))
+                self.page.keyboard.type(char, delay=random.randint(55, 180))
                 if random.random() < random.uniform(0.02, 0.07):
-                    self._wait_for_timeout(random.randint(150, 500))
+                    self._wait_for_timeout(random.randint(250, 750))
 
             self._wait_for_timeout(random.randint(500, 1200))
 
@@ -1806,6 +2062,8 @@ class AccountWarmer:
         at comment_idx, not a flat list of all Reply buttons on the page.
         """
         try:
+            if not self._pre_action_pause():
+                return False
             # Click the Reply button on THIS specific comment via JS
             reply_clicked = self.page.evaluate(
                 """(idx) => {
@@ -1879,9 +2137,9 @@ class AccountWarmer:
             self._wait_for_timeout(random.randint(300, 600))
 
             for char in reply_text:
-                self.page.keyboard.type(char, delay=random.randint(30, 120))
+                self.page.keyboard.type(char, delay=random.randint(55, 180))
                 if random.random() < random.uniform(0.02, 0.07):
-                    self._wait_for_timeout(random.randint(150, 500))
+                    self._wait_for_timeout(random.randint(250, 750))
 
             self._wait_for_timeout(random.randint(500, 1200))
 

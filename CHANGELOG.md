@@ -2,6 +2,48 @@
 
 All notable changes to the GifMake project are documented in this file.
 
+## [v0.4.0-beta] - 2026-02-19
+
+Major warmup system overhaul: GUI redesign, proxy tunnel fixes, poetry warmup mode, daily cap tracking.
+
+---
+
+### Bug Fixes — Proxy Tunnel Cascade Failure
+- **Fixed tunnel connection errors** (`ERR_TUNNEL_CONNECTION_FAILED`) caused by rapid-fire proxy rotation when the tunnel was dead
+- **Root cause:** When a session failed instantly (0s duration), the `finally` block would rotate the proxy, start the next account immediately, which would also fail, triggering another rotation — creating a death spiral of 5-6 rotations in ~2 minutes
+- **Fix 1:** Increased post-rotation wait from 7s to 30s — fxdx.in mobile tunnels need time to establish after the API returns 200
+- **Fix 2:** Skip rotation on instant-fail sessions (<30s) — rotating a dead tunnel just makes it worse
+- **Fix 3:** Cascade breaker in `_run_group_cycle` — if an account finishes in <30s, pause the group for 60s + do one clean rotation before trying the next account
+
+### New Features
+
+#### Poetry Warmup Mode (`account_warmer.py`)
+- **Poetry-based karma farming** — all comments are short poems replying to top comments
+- Auto-disables at configurable karma target (default 1500)
+- Sub-hopping every 15-25 scrolls to rotate through poetry-friendly subreddits
+
+#### Human Pacing Guardrails (`account_warmer.py`)
+- `_wait_scale` (1.35-1.75x) multiplier on all browser waits
+- `_min_wait_ms` (1000-1800ms) floor prevents micro-sleeps that look bot-like
+- `_pre_action_pause()` enforces 1.8-5.2s gap between high-impact actions
+- Typing delay increased to 55-180ms/char for more human-like comment entry
+
+#### Daily Cap System (`post_history.py`, `warmup_tab.py`)
+- Phase-based daily caps (comments + joins) tracked per account in SQLite
+- `warmup_sessions` table records per-run stats (comments, votes, joins, duration)
+- Accounts auto-skip when at daily cap; reset button to re-enable all
+- `get_daily_cap()`, `get_daily_totals()`, `record_session()` API functions
+
+#### GUI Redesign (`main_window.py`, `auto_poster_tab.py`, `warmup_tab.py`)
+- Complete visual overhaul with card-based layout and color theme system
+- Onboarding headers with step-by-step labels (Step 1: Accounts, Step 2: Campaigns, etc.)
+- Stats panel with AdsPower account name cache and warmup progress tracking
+- Continuous cycling with configurable inter-cycle pause (45-120 min)
+- Font size selector and UI scaling options
+- Warmup tab: per-group progress bars, cycle countdown timer, poetry mode toggle
+
+---
+
 ## [v0.3.0-beta] - 2026-02-03
 
 This release adds Reddit posting automation with CSV-driven batch workflows, completing the full upload-to-social pipeline.

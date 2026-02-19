@@ -1,6 +1,6 @@
-"""
+﻿"""
 Account Warmup tab for GifMake GUI.
-Standalone warmup sessions — browse, vote, comment, join subs — without posting.
+Standalone warmup sessions â€” browse, vote, comment, join subs â€” without posting.
 """
 import customtkinter as ctk
 from tkinter import messagebox
@@ -13,11 +13,15 @@ import logging
 import time
 import random
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.post_history import get_warmup_status, get_warmup_day
+from core.post_history import (
+    get_warmup_status, get_warmup_day, get_warmed_today_ids,
+    get_all_warmup_stats, get_today_sessions, reset_today_warmup,
+    get_daily_cap, get_daily_totals,
+)
 from processors.account_profile import (
     ProfileManager,
     AccountProfile,
@@ -62,7 +66,7 @@ def _setup_log_tags(textbox):
         "error":   {"foreground": "#EF4444"},
         "warning": {"foreground": "#F59E0B"},
         "info":    {"foreground": "#60A5FA"},
-        "header":  {"foreground": "#2DD4BF", "font": ("Consolas", 11, "bold")},
+        "header":  {"foreground": "#2DD4BF", "font": ("Consolas", 13, "bold")},
         "muted":   {"foreground": "#94A3B8"},
     }
     for tag, opts in tags.items():
@@ -180,7 +184,16 @@ class WarmupTab:
         self._group_warmers = {}        # {group: AccountWarmer or None}
         self._ban_log = {}
         self._rotation_urls = {}
+        self._rotation_failed_groups = set()
         self._run_all_lock = threading.Lock()
+
+        # Continuous cycling state
+        self._cycle_count = 0
+        self._next_cycle_time = None        # datetime of next cycle start
+        self._daily_caps_cache = {}         # {profile_id: {"comments": int, "joins": int}}
+        self._accounts_at_cap = set()       # profile_ids that hit daily cap
+        self._cycle_timer_id = None         # after() ID for countdown timer
+        self._last_cycle_date = None        # YYYY-MM-DD, for day-boundary reset
 
         self._load_adspower_config()
         self._load_persona_profiles()
@@ -319,13 +332,20 @@ class WarmupTab:
         desc = ctk.CTkLabel(
             hero_frame,
             text="Build account credibility before posting.\n"
-                 "The bot will scroll Reddit, upvote posts, leave comments, and join "
-                 "subreddits — just like a real person. New accounts need 3-7 days of "
-                 "warmup or Reddit's spam filter will remove your posts.",
+                 "Warmup sessions browse Reddit, vote, comment, and join communities\n"
+                 "to reduce spam-filter risk on fresh accounts.",
             font=("Segoe UI", 13), text_color=("#1F2937", "#E5E7EB"), justify="left"
         )
-        desc.grid(row=0, column=0, sticky="ew", padx=12, pady=10)
+        desc.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
         _auto_wrap(desc)
+
+        ctk.CTkLabel(
+            hero_frame,
+            text="Continuous warmup: cycles through all accounts, waits 45-120 min between cycles, stops when all hit daily cap.",
+            font=("Segoe UI", 13),
+            text_color=("#334155", "#E2E8F0"),
+            justify="left",
+        ).grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 10))
 
         # Load API keys silently from config (no visible entry fields)
         saved_keys = self._load_api_keys()
@@ -335,14 +355,17 @@ class WarmupTab:
         self.grok_key_entry = ctk.CTkEntry(self.parent)
         if self._grok_key:
             self.grok_key_entry.insert(0, self._grok_key)
-        # Don't grid — stays invisible
+        # Don't grid â€” stays invisible
 
-        # === ROW 1: ACCOUNT SELECTOR ===
+        # === ROW 1: WARMUP OVERVIEW (Stats Panel) ===
+        self._build_stats_panel()
+
+        # === ROW 7: ACCOUNT SELECTOR ===
         acct_frame = ctk.CTkFrame(self.parent, fg_color=CARD_FG)
-        acct_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5), padx=5)
+        acct_frame.grid(row=7, column=0, sticky="ew", pady=(0, 5), padx=5)
         acct_frame.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(acct_frame, text="Reddit Account:", font=("Segoe UI", 12, "bold")).grid(
+        ctk.CTkLabel(acct_frame, text="Step 4: Reddit Account", font=("Segoe UI", 14, "bold")).grid(
             row=0, column=0, sticky="w", padx=(10, 5), pady=5)
 
         acct_options = self._build_account_map()
@@ -356,21 +379,21 @@ class WarmupTab:
 
         self.add_account_btn = ctk.CTkButton(
             acct_frame, text="+ Add Account", width=120, height=30,
-            fg_color=ACCENT, hover_color=ACCENT_HOVER, font=("Segoe UI", 11, "bold"),
+            fg_color=ACCENT, hover_color=ACCENT_HOVER, font=("Segoe UI", 13, "bold"),
             command=self._open_add_account_dialog
         )
         self.add_account_btn.grid(row=0, column=2, padx=(5, 0), pady=5)
 
         self.remove_account_btn = ctk.CTkButton(
             acct_frame, text="Unlink", width=80, height=30,
-            fg_color=WARN, hover_color=WARN_HOVER, font=("Segoe UI", 11, "bold"),
+            fg_color=WARN, hover_color=WARN_HOVER, font=("Segoe UI", 13, "bold"),
             command=self._remove_selected_account
         )
         self.remove_account_btn.grid(row=0, column=3, padx=(5, 0), pady=5)
 
         self.reload_accounts_btn = ctk.CTkButton(
             acct_frame, text="Reload Config", width=100, height=30,
-            fg_color="#334155", hover_color="#1F2937", font=("Segoe UI", 11),
+            fg_color="#334155", hover_color="#1F2937", font=("Segoe UI", 13),
             command=self._reload_persona
         )
         self.reload_accounts_btn.grid(row=0, column=4, padx=(5, 10), pady=5)
@@ -387,24 +410,24 @@ class WarmupTab:
         acct_help = ctk.CTkLabel(acct_frame,
             text="Select an account for Single Account Warmup below. "
                  "Format: username (AdsPower browser ID). "
-                 "Multi-Account Warmup ignores this — it auto-discovers from AdsPower.",
-            font=("Segoe UI", 11), text_color=("#4B5563", "#94A3B8")
+                 "Multi-Account Warmup ignores this â€” it auto-discovers from AdsPower.",
+            font=("Segoe UI", 13), text_color=("#4B5563", "#D1D5DB")
         )
         acct_help.grid(row=1, column=0, columnspan=5, sticky="ew", padx=10, pady=(0, 5))
         _auto_wrap(acct_help)
 
-        # === ROW 2: PERSONA CONFIG ===
+        # === ROW 8: PERSONA CONFIG ===
         persona_frame = ctk.CTkFrame(self.parent, fg_color=CARD_FG)
-        persona_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))
+        persona_frame.grid(row=8, column=0, sticky="ew", padx=5, pady=(0, 5))
         persona_frame.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(persona_frame, text="Persona:", font=("Segoe UI", 12, "bold")).grid(
+        ctk.CTkLabel(persona_frame, text="Step 5: Persona", font=("Segoe UI", 14, "bold")).grid(
             row=0, column=0, sticky="w", padx=(10, 5), pady=(5, 0))
 
         self.persona_info_label = ctk.CTkLabel(
             persona_frame,
             text="",
-            font=("Segoe UI", 12), text_color=("#374151", "#CBD5E1"), justify="left"
+            font=("Segoe UI", 13), text_color=("#374151", "#CBD5E1"), justify="left"
         )
         self.persona_info_label.grid(row=0, column=1, columnspan=2, sticky="ew", padx=5, pady=(5, 0))
         _auto_wrap(self.persona_info_label)
@@ -418,26 +441,26 @@ class WarmupTab:
         self.persona_path_label = ctk.CTkLabel(
             config_row,
             text=f"Config: {abs_profiles_path}",
-            font=("Segoe UI", 10), text_color=("#6B7280", "#94A3B8")
+            font=("Segoe UI", 13), text_color=("#6B7280", "#D1D5DB")
         )
         self.persona_path_label.grid(row=0, column=0, sticky="w")
 
         ctk.CTkButton(
             config_row, text="Edit Persona File", width=120, height=28,
-            font=("Segoe UI", 11), command=self._open_persona_config
+            font=("Segoe UI", 13), command=self._open_persona_config
         ).grid(row=0, column=1, padx=(10, 0))
 
         ctk.CTkButton(
             config_row, text="Reload Config", width=100, height=28,
-            font=("Segoe UI", 11), fg_color="#475569", hover_color="#334155",
+            font=("Segoe UI", 13), fg_color="#475569", hover_color="#334155",
             command=self._reload_persona
         ).grid(row=0, column=2, padx=(5, 0))
 
         persona_help = ctk.CTkLabel(
             persona_frame,
-            text="The persona defines what your account is \"into\" — hobbies, location, personality. "
+            text="The persona defines what your account is \"into\" â€” hobbies, location, personality. "
                  "The bot uses this to pick subreddits to browse and to generate realistic comments.",
-            font=("Segoe UI", 11), text_color=("#4B5563", "#94A3B8")
+            font=("Segoe UI", 13), text_color=("#4B5563", "#D1D5DB")
         )
         persona_help.grid(row=2, column=0, columnspan=3, sticky="ew", padx=10, pady=(0, 5))
         _auto_wrap(persona_help)
@@ -452,14 +475,14 @@ class WarmupTab:
 
         sess_inner.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(sess_inner, text="CURRENT RUN",
-                     font=("Segoe UI", 11, "bold"),
+        ctk.CTkLabel(sess_inner, text="STEP 2: CURRENT RUN",
+                     font=("Segoe UI", 13, "bold"),
                      text_color=("#0F766E", "#14B8A6")).grid(
             row=0, column=0, sticky="w", padx=10, pady=(8, 4))
 
         self.sess_time_label = ctk.CTkLabel(
-            sess_inner, text="--", font=("Segoe UI", 11),
-            text_color=("#6B7280", "#94A3B8"))
+            sess_inner, text="--", font=("Segoe UI", 13),
+            text_color=("#6B7280", "#D1D5DB"))
         self.sess_time_label.grid(row=0, column=1, sticky="e", padx=10, pady=(8, 4))
 
         pill_frame = ctk.CTkFrame(sess_inner, fg_color="transparent")
@@ -481,20 +504,20 @@ class WarmupTab:
             pill.pack(side="left", padx=3, pady=2)
             self._pill_refs[key] = val_lbl
 
-        # === ROW 3b: LIFETIME STATS (compact bar) ===
+        # === ROW 9: LIFETIME STATS (compact bar) ===
         life_outer, life_inner = _accent_card(
             self.parent, accent_color=("#94A3B8", "#475569"),
-            row=4, column=0, sticky="ew", padx=5, pady=(0, 5))
+            row=9, column=0, sticky="ew", padx=5, pady=(0, 5))
 
         life_hdr = ctk.CTkFrame(life_inner, fg_color="transparent")
         life_hdr.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
         ctk.CTkLabel(life_hdr, text="LIFETIME TOTALS",
-                     font=("Segoe UI", 11, "bold"),
-                     text_color=("#6B7280", "#94A3B8")).pack(side="left")
+                     font=("Segoe UI", 13, "bold"),
+                     text_color=("#6B7280", "#D1D5DB")).pack(side="left")
         ctk.CTkLabel(life_hdr,
                      text="  (all warmup sessions combined for selected account)",
-                     font=("Segoe UI", 10),
-                     text_color=("#9CA3AF", "#6B7280")).pack(side="left")
+                     font=("Segoe UI", 13),
+                     text_color=("#6B7280", "#D1D5DB")).pack(side="left")
 
         life_vals = ctk.CTkFrame(life_inner, fg_color="transparent")
         life_vals.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 8))
@@ -505,8 +528,8 @@ class WarmupTab:
         self.day_label.pack(side="left", padx=(0, 14))
 
         self.status_val_label = ctk.CTkLabel(
-            life_vals, text="--", font=("Segoe UI", 12),
-            text_color=("#6B7280", "#94A3B8"))
+            life_vals, text="--", font=("Segoe UI", 13),
+            text_color=("#6B7280", "#D1D5DB"))
         self.status_val_label.pack(side="left", padx=(0, 18))
 
         self.upvotes_label = ctk.CTkLabel(
@@ -529,14 +552,14 @@ class WarmupTab:
             text_color=("#7C3AED", "#A78BFA"))
         self.posts_label.pack(side="left")
 
-        # === ROW 5: SINGLE ACCOUNT WARMUP ===
+        # === ROW 10: SINGLE ACCOUNT WARMUP ===
         single_frame = ctk.CTkFrame(self.parent, fg_color=CARD_FG, corner_radius=8)
-        single_frame.grid(row=5, column=0, sticky="ew", padx=5, pady=(5, 3))
+        single_frame.grid(row=10, column=0, sticky="ew", padx=5, pady=(5, 3))
         single_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         ctk.CTkLabel(
-            single_frame, text="SINGLE ACCOUNT WARMUP",
-            font=("Segoe UI", 12, "bold"), text_color=("#0F766E", "#14B8A6"),
+            single_frame, text="STEP 6: SINGLE ACCOUNT WARMUP",
+            font=("Segoe UI", 14, "bold"), text_color=("#0F766E", "#14B8A6"),
             anchor="w",
         ).grid(row=0, column=0, columnspan=4, sticky="w", padx=8, pady=(8, 0))
         single_desc = ctk.CTkLabel(
@@ -544,114 +567,808 @@ class WarmupTab:
             text="Runs warmup for the one account selected in the dropdown above. "
                  "Opens that account's AdsPower browser, browses Reddit, votes, comments, "
                  "and joins subs. No proxy rotation (single account only).",
-            font=("Segoe UI", 10), text_color=("#9CA3AF", "#6B7280"), anchor="w",
+            font=("Segoe UI", 13), text_color=("#6B7280", "#D1D5DB"), anchor="w",
         )
         single_desc.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 6))
         _auto_wrap(single_desc)
+
+        # Poetry warmup toggle
+        poetry_row = ctk.CTkFrame(single_frame, fg_color="transparent")
+        poetry_row.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 6))
+        poetry_row.grid_columnconfigure(2, weight=1)
+
+        self.poetry_var = ctk.BooleanVar(value=False)
+        self.poetry_check = ctk.CTkCheckBox(
+            poetry_row, text="Poetry Warmup",
+            variable=self.poetry_var,
+            font=("Segoe UI", 13, "bold"),
+            text_color=("#7C3AED", "#C4B5FD"),
+            onvalue=True, offvalue=False,
+        )
+        self.poetry_check.grid(row=0, column=0, sticky="w", padx=(0, 10))
+
+        ctk.CTkLabel(
+            poetry_row, text="Karma target:",
+            font=("Segoe UI", 13), text_color=("#374151", "#E5E7EB"),
+        ).grid(row=0, column=1, sticky="w", padx=(0, 4))
+
+        self.karma_target_entry = ctk.CTkEntry(
+            poetry_row, width=70, height=28, font=("Segoe UI", 13),
+            placeholder_text="1500",
+        )
+        self.karma_target_entry.insert(0, "1500")
+        self.karma_target_entry.grid(row=0, column=2, sticky="w")
+
+        poetry_help = ctk.CTkLabel(
+            poetry_row,
+            text="Poems reply to top comments for fast karma.",
+            font=("Segoe UI", 13), text_color=("#4B5563", "#D1D5DB"),
+        )
+        poetry_help.grid(row=0, column=3, sticky="ew", padx=(10, 0))
+        _auto_wrap(poetry_help)
 
         self.start_btn = ctk.CTkButton(
             single_frame, text="Start Selected Account", font=("Segoe UI", 13, "bold"),
             height=38, fg_color=ACCENT, hover_color=ACCENT_HOVER,
             command=self._start_warmup)
-        self.start_btn.grid(row=2, column=0, sticky="ew", padx=4, pady=(0, 6))
+        self.start_btn.grid(row=3, column=0, sticky="ew", padx=4, pady=(0, 6))
 
         self.stop_btn = ctk.CTkButton(
             single_frame, text="Stop (Graceful)", font=("Segoe UI", 13, "bold"),
             height=38, fg_color=WARN, hover_color=WARN_HOVER,
             command=self._stop_warmup, state="disabled")
-        self.stop_btn.grid(row=2, column=1, sticky="ew", padx=4, pady=(0, 6))
+        self.stop_btn.grid(row=3, column=1, sticky="ew", padx=4, pady=(0, 6))
 
         self.refresh_btn = ctk.CTkButton(
             single_frame, text="Reload DB Stats", font=("Segoe UI", 13, "bold"),
             height=38, fg_color="#334155", hover_color="#1F2937",
             command=self._refresh_stats)
-        self.refresh_btn.grid(row=2, column=2, sticky="ew", padx=4, pady=(0, 6))
+        self.refresh_btn.grid(row=3, column=2, sticky="ew", padx=4, pady=(0, 6))
 
         self.activity_btn = ctk.CTkButton(
             single_frame, text="Last Session Log", font=("Segoe UI", 13, "bold"),
             height=38, fg_color="#1E40AF", hover_color="#1E3A8A",
             command=self._show_activity_popout)
-        self.activity_btn.grid(row=2, column=3, sticky="ew", padx=4, pady=(0, 6))
+        self.activity_btn.grid(row=3, column=3, sticky="ew", padx=4, pady=(0, 6))
 
-        # === ROW 6: MULTI-ACCOUNT WARMUP ===
+        # === ROW 2: MULTI-ACCOUNT WARMUP ===
         all_frame = ctk.CTkFrame(self.parent, fg_color=CARD_FG, corner_radius=8,
                                  border_width=2, border_color=("#15803D", "#166534"))
-        all_frame.grid(row=6, column=0, sticky="ew", padx=5, pady=(3, 5))
+        all_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(3, 5))
         all_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         ctk.CTkLabel(
-            all_frame, text="MULTI-ACCOUNT WARMUP (ALL PROXY GROUPS)",
-            font=("Segoe UI", 12, "bold"), text_color=("#15803D", "#4ADE80"),
+            all_frame, text="STEP 1: MULTI-ACCOUNT WARMUP (ALL PROXY GROUPS)",
+            font=("Segoe UI", 14, "bold"), text_color=("#15803D", "#4ADE80"),
             anchor="w",
         ).grid(row=0, column=0, columnspan=4, sticky="w", padx=8, pady=(8, 0))
         all_desc = ctk.CTkLabel(
             all_frame,
             text="Scans AdsPower for ALL accounts named 'P ...', 'G ...', 'F ...', '4u ...' "
-                 "(these are the 4 proxy groups — each shares one mobile proxy IP). "
+                 "(these are the 4 proxy groups â€” each shares one mobile proxy IP). "
                  "Runs 4 threads (one per group). Within each group, accounts run one at a time: "
                  "open browser \u2192 ban check \u2192 warmup \u2192 close browser \u2192 rotate proxy IP \u2192 next account. "
                  "Permabanned accounts (from data/warmup_bans.json) are auto-skipped.",
-            font=("Segoe UI", 10), text_color=("#9CA3AF", "#6B7280"), anchor="w",
+            font=("Segoe UI", 13), text_color=("#6B7280", "#D1D5DB"), anchor="w",
         )
         all_desc.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 6))
         _auto_wrap(all_desc)
+
+        # Poetry warmup toggle (applies to ALL accounts in multi-warmup)
+        poetry_row = ctk.CTkFrame(all_frame, fg_color="transparent")
+        poetry_row.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 6))
+        poetry_row.grid_columnconfigure(3, weight=1)
+
+        self.poetry_all_var = ctk.BooleanVar(value=False)
+        self.poetry_all_check = ctk.CTkCheckBox(
+            poetry_row, text="Poetry Mode",
+            variable=self.poetry_all_var,
+            font=("Segoe UI", 13, "bold"),
+            text_color=("#7C3AED", "#C4B5FD"),
+            onvalue=True, offvalue=False,
+        )
+        self.poetry_all_check.grid(row=0, column=0, sticky="w", padx=(0, 10))
+
+        ctk.CTkLabel(
+            poetry_row, text="Karma target:",
+            font=("Segoe UI", 13), text_color=("#374151", "#E5E7EB"),
+        ).grid(row=0, column=1, sticky="w", padx=(0, 4))
+
+        self.karma_all_entry = ctk.CTkEntry(
+            poetry_row, width=70, height=28, font=("Segoe UI", 13),
+            placeholder_text="1500",
+        )
+        self.karma_all_entry.insert(0, "1500")
+        self.karma_all_entry.grid(row=0, column=2, sticky="w")
+
+        poetry_all_help = ctk.CTkLabel(
+            poetry_row,
+            text="Poems reply to top comments for fast karma.",
+            font=("Segoe UI", 13), text_color=("#4B5563", "#D1D5DB"),
+        )
+        poetry_all_help.grid(row=0, column=3, sticky="ew", padx=(10, 0))
+        _auto_wrap(poetry_all_help)
 
         self.run_all_btn = ctk.CTkButton(
             all_frame, text="Start All Accounts (Auto-Discover from AdsPower)",
             font=("Segoe UI", 13, "bold"),
             height=42, fg_color="#15803D", hover_color="#166534",
             command=self._start_run_all)
-        self.run_all_btn.grid(row=2, column=0, columnspan=2, sticky="ew", padx=4, pady=(0, 6))
+        self.run_all_btn.grid(row=3, column=0, columnspan=2, sticky="ew", padx=4, pady=(0, 6))
 
         self.stop_all_btn = ctk.CTkButton(
             all_frame, text="Stop All (Graceful)", font=("Segoe UI", 13, "bold"),
             height=42, fg_color="#991B1B", hover_color="#7F1D1D",
             command=self._stop_run_all, state="disabled")
-        self.stop_all_btn.grid(row=2, column=2, columnspan=2, sticky="ew", padx=4, pady=(0, 6))
+        self.stop_all_btn.grid(row=3, column=2, sticky="ew", padx=4, pady=(0, 6))
 
-        # Proxy group progress — with header explaining what the groups are
+        self.reset_today_btn = ctk.CTkButton(
+            all_frame, text="Reset Today", font=("Segoe UI", 13, "bold"),
+            height=42, fg_color="#B45309", hover_color="#92400E",
+            command=self._reset_today)
+        self.reset_today_btn.grid(row=3, column=3, sticky="ew", padx=4, pady=(0, 6))
+
+        # Proxy group progress â€" with header explaining what the groups are
         ctk.CTkLabel(
             all_frame, text="Proxy Group Progress:",
-            font=("Segoe UI", 10, "bold"), text_color=("#6B7280", "#9CA3AF"),
+            font=("Segoe UI", 14, "bold"), text_color=("#6B7280", "#D1D5DB"),
             anchor="w",
-        ).grid(row=3, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 0))
+        ).grid(row=4, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 0))
 
         self._group_labels = {}
         for i, grp in enumerate(["P", "G", "F", "4u"]):
             lbl = ctk.CTkLabel(
                 all_frame, text=f"{grp}: waiting",
-                font=("Segoe UI", 11, "bold"), text_color=("#334155", "#94A3B8"))
-            lbl.grid(row=4, column=i, padx=8, pady=2)
+                font=("Segoe UI", 13, "bold"), text_color=("#334155", "#E2E8F0"))
+            lbl.grid(row=5, column=i, padx=8, pady=2)
             self._group_labels[grp] = lbl
 
         self._run_all_overall_label = ctk.CTkLabel(
             all_frame, text="Not started",
-            font=("Segoe UI", 11), text_color=("#4B5563", "#94A3B8"))
-        self._run_all_overall_label.grid(row=5, column=0, columnspan=4, pady=(0, 8))
+            font=("Segoe UI", 13), text_color=("#4B5563", "#D1D5DB"))
+        self._run_all_overall_label.grid(row=6, column=0, columnspan=4, pady=(0, 8))
 
         # Store last session's action log for the popout
         self._last_action_log = []
 
-        # === ROW 7: PROGRESS ===
+        # === ROW 4: PROGRESS ===
         self.progress_label = ctk.CTkLabel(
-            self.parent, text="", font=("Segoe UI", 11), text_color=("#4B5563", "#94A3B8"))
-        self.progress_label.grid(row=7, column=0, sticky="w", padx=10, pady=(5, 2))
+            self.parent, text="", font=("Segoe UI", 13), text_color=("#4B5563", "#D1D5DB"))
+        self.progress_label.grid(row=4, column=0, sticky="w", padx=10, pady=(5, 2))
 
-        # === ROW 8: LOG LABEL / ROW 9: LOG BOX ===
+        # === ROW 5: LOG LABEL / ROW 6: LOG BOX ===
         ctk.CTkLabel(
-            self.parent, text="Live Activity Log", font=("Segoe UI", 12, "bold")
-        ).grid(row=8, column=0, sticky="w", padx=10, pady=(5, 0))
+            self.parent, text="STEP 3: LIVE ACTIVITY LOG", font=("Segoe UI", 14, "bold")
+        ).grid(row=5, column=0, sticky="w", padx=10, pady=(5, 0))
         self.log_box = ctk.CTkTextbox(
-            self.parent, height=350, font=("Consolas", 11),
+            self.parent, height=350, font=("Consolas", 13),
             fg_color=("#F9FAFB", "#0D1117"), border_width=1,
             border_color=("#D1D5DB", "#21262D"))
-        self.log_box.grid(row=9, column=0, sticky="nsew", padx=5, pady=5)
-        self.parent.grid_rowconfigure(9, weight=1)
+        self.log_box.grid(row=6, column=0, sticky="nsew", padx=5, pady=5)
+        self.parent.grid_rowconfigure(6, weight=1)
         _setup_log_tags(self.log_box)
 
         # Trigger initial account selection (must be after all widgets are created)
         if acct_options and acct_options[0] in self._acct_map:
             self._on_account_change(acct_options[0])
+
+    # ── Warmup Overview Stats Panel ────────────────────────────────────
+
+    # Phase color system (cold → warm progression)
+    PHASE_DEFS = [
+        {"key": "lurker",  "name": "Lurker",  "days": (1, 7),
+         "fill": "#64748B", "bg": "#334155", "text": "#94A3B8", "badge": "#1E293B"},
+        {"key": "light",   "name": "Light",   "days": (8, 14),
+         "fill": "#38BDF8", "bg": "#1E3A5F", "text": "#7DD3FC", "badge": "#0C2D48"},
+        {"key": "regular", "name": "Regular", "days": (15, 21),
+         "fill": "#A78BFA", "bg": "#2D2150", "text": "#C4B5FD", "badge": "#1E1545"},
+        {"key": "active",  "name": "Active",  "days": (22, 30),
+         "fill": "#22C55E", "bg": "#14352A", "text": "#4ADE80", "badge": "#052E16"},
+    ]
+
+    STATUS_COLORS = {
+        "done":    {"strip": "#22C55E", "bg": ("#F0FDF4", "#0A1F0A")},
+        "pending": {"strip": "#3B82F6", "bg": CARD_FG},
+        "stale":   {"strip": "#F59E0B", "bg": ("#FFFBEB", "#1F1A0A")},
+        "banned":  {"strip": "#EF4444", "bg": ("#FEF2F2", "#1F0A0A")},
+        "idle":    {"strip": "#6B7280", "bg": CARD_FG},
+    }
+
+    def _get_phase(self, day):
+        """Return phase dict for the given warmup day."""
+        for p in self.PHASE_DEFS:
+            if day <= p["days"][1]:
+                return p
+        return self.PHASE_DEFS[-1]
+
+    def _build_stats_panel(self):
+        """Build the full warmup overview: collapsible header + KPI cards + account cards."""
+        self._stats_outer = ctk.CTkFrame(
+            self.parent, fg_color=CARD_FG, corner_radius=8,
+            border_width=1, border_color=("#C8D9F1", "#314055"))
+        self._stats_outer.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 5))
+        self._stats_outer.grid_columnconfigure(0, weight=1)
+
+        # ── Collapsible header bar ──
+        toggle_bar = ctk.CTkFrame(self._stats_outer, fg_color="transparent",
+                                   cursor="hand2")
+        toggle_bar.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 4))
+        toggle_bar.bind("<Button-1>", lambda e: self._toggle_stats_panel())
+
+        ctk.CTkLabel(toggle_bar, text="WARMUP ANALYTICS",
+                     font=("Segoe UI", 13, "bold"),
+                     text_color=("#0F766E", "#14B8A6")).pack(side="left")
+
+        self._stats_summary_label = ctk.CTkLabel(
+            toggle_bar, text="",
+            font=("Segoe UI", 11),
+            text_color=("#6B7280", "#94A3B8"))
+        self._stats_summary_label.pack(side="left", padx=(12, 0))
+
+        self._stats_chevron = ctk.CTkLabel(
+            toggle_bar, text="\u25BC",
+            font=("Segoe UI", 11),
+            text_color=("#6B7280", "#94A3B8"))
+        self._stats_chevron.pack(side="right")
+
+        ctk.CTkButton(
+            toggle_bar, text="Refresh", width=56, height=22,
+            fg_color=SECONDARY, hover_color=SECONDARY_HOVER,
+            font=("Segoe UI", 10),
+            command=self._refresh_stats_panel
+        ).pack(side="right", padx=(0, 8))
+
+        # ── Expandable content frame (hidden by default) ──
+        self._stats_expanded = False
+        self._stats_frame = ctk.CTkFrame(self._stats_outer, fg_color="transparent")
+        self._stats_frame.grid_columnconfigure(0, weight=1)
+        # NOT gridded yet -- starts collapsed
+
+        # ── Hero KPI row: 4 large metric cards ──
+        hero = ctk.CTkFrame(self._stats_frame, fg_color="transparent")
+        hero.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        for i in range(4):
+            hero.grid_columnconfigure(i, weight=1, uniform="kpi")
+
+        self._kpi_cards = {}
+        kpi_defs = [
+            ("progress", "TODAY'S PROGRESS", "--",  "+0 today",  ACCENT),
+            ("avg_day",  "AVG WARMUP DAY",   "--",  "Phase: --", "#3B82F6"),
+            ("actions",  "TOTAL ACTIONS",    "0",   "+0 today",  "#22C55E"),
+            ("banned",   "BANNED",           "0",   "",          "#6B7280"),
+        ]
+        for i, (key, label, default_val, default_delta, accent) in enumerate(kpi_defs):
+            card = ctk.CTkFrame(hero, fg_color=CARD_FG, corner_radius=8,
+                                border_width=1, border_color=("#D1D5DB", "#2D3748"),
+                                height=100)
+            card.grid(row=0, column=i, sticky="nsew",
+                      padx=(0 if i == 0 else 3, 0 if i == 3 else 3))
+            card.pack_propagate(False)
+
+            # Left accent strip
+            strip = ctk.CTkFrame(card, width=4, corner_radius=0, fg_color=accent)
+            strip.pack(side="left", fill="y")
+
+            inner = ctk.CTkFrame(card, fg_color="transparent")
+            inner.pack(side="left", fill="both", expand=True, padx=12, pady=10)
+
+            lbl = ctk.CTkLabel(inner, text=label,
+                               font=("Segoe UI", 11),
+                               text_color=("#6B7280", "#94A3B8"), anchor="w")
+            lbl.pack(anchor="w")
+
+            val = ctk.CTkLabel(inner, text=default_val,
+                               font=("Segoe UI", 28, "bold"),
+                               text_color=("#111827", "#F9FAFB"), anchor="w")
+            val.pack(anchor="w", pady=(2, 0))
+
+            delta = ctk.CTkLabel(inner, text=default_delta,
+                                 font=("Segoe UI", 12),
+                                 text_color="#22C55E", anchor="w")
+            delta.pack(anchor="w")
+
+            self._kpi_cards[key] = {"card": card, "strip": strip,
+                                     "val": val, "delta": delta}
+
+        # ── Header row for account cards ──
+        acct_header = ctk.CTkFrame(self._stats_frame, fg_color="transparent")
+        acct_header.grid(row=1, column=0, sticky="ew", pady=(2, 2))
+
+        ctk.CTkLabel(acct_header, text="ACCOUNT WARMUP PROGRESS",
+                     font=("Segoe UI", 13, "bold"),
+                     text_color=("#0F766E", "#14B8A6")).pack(side="left")
+
+        self._nsfw_ready_label = ctk.CTkLabel(
+            acct_header, text="",
+            font=("Segoe UI", 11, "bold"),
+            text_color="#22C55E")
+        self._nsfw_ready_label.pack(side="right", padx=(0, 4))
+
+        # ── Scrollable account card list ──
+        self._acct_cards_frame = ctk.CTkScrollableFrame(
+            self._stats_frame, height=300,
+            fg_color=("#F1F5F9", "#0F172A"), corner_radius=6)
+        self._acct_cards_frame.grid(row=2, column=0, sticky="ew", padx=0, pady=(0, 4))
+        self._acct_cards_frame.grid_columnconfigure(0, weight=1)
+
+        # Load data after GUI is ready (updates summary even when collapsed)
+        self.app.after(300, self._refresh_stats_panel)
+
+    @staticmethod
+    def _clean_adspower_name(raw_name):
+        """Extract Reddit username from AdsPower profile name.
+
+        Handles formats like:
+          'P honeytonedhaze'           -> 'honeytonedhaze'
+          'G - reddit bot - Username'  -> 'Username'
+          'F - reddit bot -Username'   -> 'Username'
+          'honeytonedhaze'             -> 'honeytonedhaze'
+        """
+        name = (raw_name or "").strip()
+        # Strip proxy group prefix
+        for pfx in PROXY_PREFIXES:
+            if name.startswith(pfx):
+                name = name[len(pfx):].strip()
+                break
+        # Strip "- reddit bot -" or similar middle segments
+        if " - " in name:
+            name = name.rsplit(" - ", 1)[-1].strip()
+        elif name.startswith("- "):
+            name = name.lstrip("- ").strip()
+        # If still starts with "reddit bot" junk, strip it
+        if name.lower().startswith("reddit bot"):
+            name = name[len("reddit bot"):].lstrip(" -").strip()
+        return name or raw_name
+
+    def _build_adspower_name_cache(self, needed_ids=None):
+        """Query AdsPower API to build adspower_id -> reddit username cache.
+
+        Args:
+            needed_ids: Optional set of profile IDs still unmapped after
+                        other tiers. Triggers individual lookups for each.
+        """
+        if hasattr(self, '_ads_name_cache') and self._ads_name_cache:
+            # Individual lookups for any IDs missing from cache
+            if needed_ids:
+                self._individual_lookups(needed_ids)
+            return self._ads_name_cache
+
+        self._ads_name_cache = {}
+        api_base = self.adspower_config.get(
+            "adspower_api_base", "http://localhost:50325")
+        api_key = self.adspower_config.get("api_key", "")
+        page_num = 1
+
+        while page_num <= 10:  # safety cap
+            for attempt in range(3):
+                try:
+                    resp = requests.get(
+                        f"{api_base}/api/v1/user/list",
+                        params={"api_key": api_key, "page": page_num,
+                                "page_size": 100, "group_id": 0},
+                        timeout=10)
+                    data = resp.json()
+                    if data.get("code") == 0:
+                        break
+                    time.sleep(1)  # rate limit retry
+                except Exception:
+                    data = None
+                    time.sleep(1)
+            else:
+                break  # 3 failed attempts
+
+            if not data or data.get("code") != 0:
+                break
+
+            items = data.get("data", {}).get("list", [])
+            if not items:
+                break
+
+            for item in items:
+                uid = item.get("user_id", "")
+                clean = self._clean_adspower_name(item.get("name", ""))
+                if uid and clean:
+                    self._ads_name_cache[uid] = clean
+
+            if len(items) < 100:
+                break  # last page
+            page_num += 1
+
+        # Individual lookups for IDs missed by the paginated list
+        if needed_ids:
+            self._individual_lookups(needed_ids)
+
+        return self._ads_name_cache
+
+    def _individual_lookups(self, needed_ids):
+        """Look up individual profile IDs via AdsPower API."""
+        api_base = self.adspower_config.get(
+            "adspower_api_base", "http://localhost:50325")
+        api_key = self.adspower_config.get("api_key", "")
+        for pid in list(needed_ids)[:20]:  # cap at 20
+            if pid in self._ads_name_cache:
+                continue
+            try:
+                resp = requests.get(
+                    f"{api_base}/api/v1/user/list",
+                    params={"api_key": api_key, "user_id": pid},
+                    timeout=5)
+                data = resp.json()
+                items = (data.get("data") or {}).get("list") or []
+                if items:
+                    name = self._clean_adspower_name(
+                        items[0].get("name", ""))
+                    if name:
+                        self._ads_name_cache[pid] = name
+            except Exception:
+                pass
+            time.sleep(0.3)
+
+    def _toggle_stats_panel(self):
+        """Expand or collapse the full analytics panel."""
+        self._stats_expanded = not self._stats_expanded
+        if self._stats_expanded:
+            self._stats_chevron.configure(text="\u25B2")
+            self._stats_frame.grid(row=1, column=0, sticky="ew",
+                                    padx=4, pady=(0, 6))
+            self._refresh_stats_panel()
+        else:
+            self._stats_chevron.configure(text="\u25BC")
+            self._stats_frame.grid_forget()
+
+    def _refresh_stats_panel(self):
+        """Kick off a background thread to fetch data, then update UI."""
+        threading.Thread(target=self._fetch_stats_data, daemon=True).start()
+
+    def _fetch_stats_data(self):
+        """Background thread: fetch all data (DB + API), then hand to main thread."""
+        self._ads_name_cache = {}
+        try:
+            all_stats = get_all_warmup_stats()
+            warmed_today = get_warmed_today_ids()
+            today_sessions = get_today_sessions()
+        except Exception as e:
+            logger.error(f"Stats panel refresh failed: {e}")
+            return
+
+        ban_log = self._load_ban_log()
+
+        # Build username map (includes AdsPower API calls)
+        username_map = {}
+        all_profile_ids = set(s["profile_id"] for s in all_stats)
+
+        for key, profile in self.persona_profiles.items():
+            ads_id = (profile.get("adspower_id") or "").strip()
+            if ads_id:
+                uname = profile.get("reddit_account", {}).get("username", key)
+                username_map[ads_id] = uname
+
+        for ads_id, name in self.profiles_data.items():
+            if ads_id not in username_map:
+                clean = name
+                for pfx in PROXY_PREFIXES:
+                    if name.startswith(pfx):
+                        clean = name[len(pfx):]
+                        break
+                username_map[ads_id] = clean
+
+        still_needed = all_profile_ids - set(username_map.keys())
+        ads_cache = self._build_adspower_name_cache(
+            needed_ids=still_needed if still_needed else None)
+        for ads_id, name in ads_cache.items():
+            if ads_id not in username_map:
+                username_map[ads_id] = name
+
+        today_map = {}
+        for ts in today_sessions:
+            today_map[ts["profile_id"]] = ts
+
+        # Hand results to main thread for UI update
+        self.app.after(0, self._apply_stats_data,
+                       all_stats, warmed_today, today_sessions,
+                       today_map, ban_log, username_map)
+
+    def _apply_stats_data(self, all_stats, warmed_today, today_sessions,
+                          today_map, ban_log, username_map):
+        """Main thread: update all UI widgets with fetched data."""
+        banned_ids = {k for k, v in ban_log.items()
+                      if v.get("status") == "permaban"}
+        active_stats = [s for s in all_stats
+                        if s["profile_id"] not in banned_ids]
+
+        n_active = len(active_stats)
+        n_today = len(warmed_today - banned_ids)
+        n_banned = len(banned_ids)
+
+        days_list = []
+        for s in active_stats:
+            try:
+                started = datetime.fromisoformat(s["started_at"])
+                days_list.append((datetime.now() - started).days + 1)
+            except Exception:
+                pass
+        avg_day = round(sum(days_list) / len(days_list)) if days_list else 0
+
+        total_cmt_all = sum(s.get("total_comments", 0) for s in all_stats)
+        total_join_all = sum(s.get("total_joins", 0) for s in all_stats)
+        total_actions_all = total_cmt_all + total_join_all
+
+        cmt_today = sum(t.get("comments", 0) for t in today_sessions)
+        join_today = sum(t.get("joins", 0) for t in today_sessions)
+        actions_today = cmt_today + join_today
+
+        # Card 1: Today's Progress
+        self._kpi_cards["progress"]["val"].configure(
+            text=f"{n_today} / {n_active}")
+        self._kpi_cards["progress"]["delta"].configure(
+            text="accounts warmed",
+            text_color="#22C55E" if n_today >= n_active and n_active > 0 else "#94A3B8")
+
+        # Card 2: Avg Warmup Day
+        phase = self._get_phase(avg_day)
+        self._kpi_cards["avg_day"]["val"].configure(text=str(avg_day))
+        self._kpi_cards["avg_day"]["delta"].configure(
+            text=f"Phase: {phase['name']}", text_color=phase["fill"])
+        self._kpi_cards["avg_day"]["strip"].configure(fg_color=phase["fill"])
+
+        # Card 3: Total Actions
+        self._kpi_cards["actions"]["val"].configure(text=str(total_actions_all))
+        self._kpi_cards["actions"]["delta"].configure(
+            text=f"+{actions_today} today" if actions_today else "no activity today",
+            text_color="#22C55E" if actions_today else "#94A3B8")
+
+        # Card 4: Banned
+        self._kpi_cards["banned"]["val"].configure(text=str(n_banned))
+        self._kpi_cards["banned"]["strip"].configure(
+            fg_color="#EF4444" if n_banned > 0 else "#6B7280")
+        if n_banned > 0:
+            banned_names = [username_map.get(bid, bid[:8])
+                            for bid in list(banned_ids)[:2]]
+            self._kpi_cards["banned"]["delta"].configure(
+                text=", ".join(banned_names), text_color="#EF4444")
+        else:
+            self._kpi_cards["banned"]["delta"].configure(
+                text="all clear", text_color="#22C55E")
+
+        # NSFW-ready count
+        nsfw_ready = sum(1 for d in days_list if d >= 14)
+        self._nsfw_ready_label.configure(
+            text=f"{nsfw_ready}/{n_active} NSFW-ready" if n_active else "")
+
+        # Update collapsed summary line
+        summary_parts = [f"{n_today}/{n_active} warmed today"]
+        if avg_day:
+            summary_parts.append(f"Day {avg_day} avg")
+        if n_banned:
+            summary_parts.append(f"{n_banned} banned")
+        if actions_today:
+            summary_parts.append(f"+{actions_today} actions today")
+        self._stats_summary_label.configure(
+            text="  |  ".join(summary_parts))
+
+        # Rebuild account cards (only if expanded)
+        if not self._stats_expanded:
+            return
+        self._rebuild_account_cards(
+            all_stats, warmed_today, today_map, ban_log, username_map)
+
+    def _rebuild_account_cards(self, all_stats, warmed_today, today_map,
+                                ban_log, username_map):
+        """Rebuild all account cards in the scrollable frame."""
+        for w in self._acct_cards_frame.winfo_children():
+            w.destroy()
+
+        banned_ids = {k for k, v in ban_log.items()
+                      if v.get("status") == "permaban"}
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
+        # Build row data
+        rows = []
+        for s in all_stats:
+            pid = s["profile_id"]
+            is_banned = pid in banned_ids
+            is_done = pid in warmed_today
+
+            try:
+                started = datetime.fromisoformat(s["started_at"])
+                day = (datetime.now() - started).days + 1
+            except Exception:
+                day = 0
+
+            last_date = s.get("last_activity_date") or ""
+            if last_date == today_str:
+                last_run = "today"
+            elif last_date:
+                try:
+                    delta = (datetime.now()
+                             - datetime.strptime(last_date, "%Y-%m-%d")).days
+                    last_run = "yesterday" if delta == 1 else f"{delta}d ago"
+                except Exception:
+                    last_run = last_date
+            else:
+                last_run = "never"
+
+            # Status + sort priority
+            if is_banned:
+                status, sk = "banned", 4
+            elif is_done:
+                status, sk = "done", 2
+            elif day > 0:
+                status, sk = "pending", 1
+            else:
+                status, sk = "idle", 3
+
+            ts = today_map.get(pid, {})
+            rows.append({
+                "pid": pid, "sk": sk, "status": status,
+                "user": username_map.get(pid, pid[:12]),
+                "day": day,
+                "cmt_today": ts.get("comments", 0),
+                "up_today": ts.get("upvotes", 0),
+                "join_today": ts.get("joins", 0),
+                "cmt_all": s.get("total_comments", 0),
+                "up_all": s.get("total_upvotes", 0),
+                "join_all": s.get("total_joins", 0),
+                "last_run": last_run,
+            })
+
+        rows.sort(key=lambda r: (r["sk"], r["user"].lower()))
+        visible = [r for r in rows if r["status"] != "banned"]
+        banned_rows = [r for r in rows if r["status"] == "banned"]
+
+        for i, r in enumerate(visible):
+            self._build_account_card(self._acct_cards_frame, r, i)
+
+        # Banned section at bottom
+        if banned_rows:
+            sep = ctk.CTkFrame(self._acct_cards_frame, height=1,
+                               fg_color=("#D1D5DB", "#334155"))
+            sep.grid(row=len(visible), column=0, sticky="ew",
+                     padx=8, pady=(8, 4))
+            ctk.CTkLabel(
+                self._acct_cards_frame,
+                text=f"{len(banned_rows)} BANNED",
+                font=("Segoe UI", 11, "bold"), text_color="#EF4444",
+            ).grid(row=len(visible) + 1, column=0, sticky="w",
+                   padx=8, pady=(0, 2))
+            for j, r in enumerate(banned_rows):
+                self._build_account_card(
+                    self._acct_cards_frame, r,
+                    len(visible) + 2 + j, compact=True)
+
+    def _build_account_card(self, parent, r, grid_row, compact=False):
+        """Build one account card with status strip, phase bar, stats."""
+        sc = self.STATUS_COLORS.get(r["status"], self.STATUS_COLORS["idle"])
+        phase = self._get_phase(r["day"])
+
+        card = ctk.CTkFrame(parent, fg_color=sc["bg"], corner_radius=8,
+                            height=80 if not compact else 40)
+        card.grid(row=grid_row, column=0, sticky="ew", padx=4, pady=2)
+        card.grid_propagate(False)
+        card.grid_columnconfigure(1, weight=1)
+        card.grid_rowconfigure(0, weight=1)
+
+        # Left status strip (4px colored bar)
+        strip = ctk.CTkFrame(card, width=4, corner_radius=0,
+                              fg_color=sc["strip"])
+        strip.grid(row=0, column=0, rowspan=3 if not compact else 1,
+                   sticky="ns", padx=(0, 0), pady=0)
+
+        if compact:
+            # Banned accounts: just username + status
+            ctk.CTkLabel(
+                card, text=f"\u2717  {r['user']}",
+                font=("Segoe UI", 11),
+                text_color="#EF4444", anchor="w"
+            ).grid(row=0, column=1, sticky="w", padx=12, pady=4)
+            return
+
+        # ── Row 0: Identity + phase badge + milestone + last run ──
+        header = ctk.CTkFrame(card, fg_color="transparent")
+        header.grid(row=0, column=1, sticky="ew", padx=(10, 8), pady=(6, 0))
+
+        # Status dot
+        dot_map = {"done": ("\u2713", "#22C55E"), "pending": ("\u25CF", "#3B82F6"),
+                   "stale": ("\u25CF", "#F59E0B"), "idle": ("\u25CB", "#6B7280")}
+        dot_char, dot_col = dot_map.get(r["status"], ("\u25CB", "#6B7280"))
+        ctk.CTkLabel(header, text=dot_char, font=("Segoe UI", 12, "bold"),
+                     text_color=dot_col, width=16).pack(side="left")
+
+        # Username
+        ctk.CTkLabel(header, text=r["user"][:18],
+                     font=("Segoe UI", 13, "bold"),
+                     text_color=("#1F2937", "#E5E7EB"),
+                     anchor="w").pack(side="left", padx=(2, 8))
+
+        # Day counter
+        ctk.CTkLabel(header, text=f"Day {r['day']}",
+                     font=("Segoe UI", 11),
+                     text_color=phase["text"]).pack(side="left", padx=(0, 4))
+
+        # Phase pill badge
+        pill = ctk.CTkFrame(header, fg_color=phase["badge"],
+                            corner_radius=8, width=60, height=20)
+        pill.pack_propagate(False)
+        pill.pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(pill, text=phase["name"],
+                     font=("Segoe UI", 9, "bold"),
+                     text_color=phase["fill"]).pack(expand=True)
+
+        # Milestone badge (NSFW unlock at day 14)
+        if r["day"] >= 14:
+            m_text, m_color = "NSFW \u2713", "#22C55E"
+        elif r["day"] >= 11:
+            m_text = f"NSFW in {14 - r['day']}d"
+            m_color = "#FBBF24"
+        else:
+            m_text, m_color = "", ""
+
+        if m_text:
+            mbadge = ctk.CTkFrame(header,
+                                   fg_color=("#1C1917", "#1C1917") if m_color == "#FBBF24"
+                                   else ("#052E16", "#052E16"),
+                                   corner_radius=6, width=72, height=18)
+            mbadge.pack_propagate(False)
+            mbadge.pack(side="left")
+            ctk.CTkLabel(mbadge, text=m_text, font=("Segoe UI", 8, "bold"),
+                         text_color=m_color).pack(expand=True)
+
+        # Last run (right-aligned)
+        ctk.CTkLabel(header, text=r["last_run"],
+                     font=("Segoe UI", 10),
+                     text_color=("#6B7280", "#94A3B8")).pack(side="right")
+
+        # ── Row 1: Phase progress bar (segmented) ──
+        bar_frame = ctk.CTkFrame(card, fg_color="transparent", height=16)
+        bar_frame.grid(row=1, column=1, sticky="ew", padx=(12, 10), pady=(2, 0))
+        bar_frame.pack_propagate(False)
+
+        for p in self.PHASE_DEFS:
+            day_start, day_end = p["days"]
+            span = day_end - day_start + 1
+            if r["day"] > day_end:
+                fill = 1.0
+            elif r["day"] >= day_start:
+                fill = (r["day"] - day_start) / span
+            else:
+                fill = 0.0
+
+            seg = ctk.CTkFrame(bar_frame, fg_color=p["bg"],
+                               corner_radius=3, height=12)
+            seg.pack(side="left", expand=True, fill="x", padx=(0, 1))
+            seg.pack_propagate(False)
+
+            if fill > 0:
+                inner_fill = ctk.CTkFrame(seg, fg_color=p["fill"],
+                                           corner_radius=2)
+                inner_fill.place(relx=0, rely=0.08, relwidth=max(0.04, fill),
+                                 relheight=0.84)
+
+        # ── Row 2: Today stats + All-time stats ──
+        stats_row = ctk.CTkFrame(card, fg_color="transparent")
+        stats_row.grid(row=2, column=1, sticky="ew", padx=(12, 10), pady=(2, 6))
+
+        # Today
+        today_color = "#4ADE80" if r["status"] == "done" else ("#94A3B8", "#64748B")
+        ctk.CTkLabel(stats_row, text="TODAY",
+                     font=("Segoe UI", 9, "bold"),
+                     text_color=("#888899", "#888899")).pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(stats_row, text=f"{r['cmt_today']}c  {r['up_today']}v  {r['join_today']}j",
+                     font=("Segoe UI", 11, "bold"),
+                     text_color=today_color).pack(side="left", padx=(0, 16))
+
+        # Separator
+        ctk.CTkFrame(stats_row, width=1, height=14,
+                     fg_color=("#D1D5DB", "#334155")).pack(side="left", padx=(0, 16))
+
+        # All-time
+        ctk.CTkLabel(stats_row, text="ALL",
+                     font=("Segoe UI", 9, "bold"),
+                     text_color=("#888899", "#888899")).pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(stats_row,
+                     text=f"{r['cmt_all']}c  {r['up_all']}v  {r['join_all']}j",
+                     font=("Segoe UI", 11),
+                     text_color=("#374151", "#CBD5E1")).pack(side="left")
 
     def _open_persona_config(self):
         """Open the persona config file in the default text editor."""
@@ -755,7 +1472,7 @@ class WarmupTab:
         ]
         entries = {}
         for row, (label, key, default) in enumerate(fields, start=1):
-            ctk.CTkLabel(dialog, text=label, font=("Segoe UI", 11, "bold")).grid(
+            ctk.CTkLabel(dialog, text=label, font=("Segoe UI", 13, "bold")).grid(
                 row=row, column=0, sticky="w", padx=16, pady=6
             )
             entry = ctk.CTkEntry(dialog)
@@ -767,8 +1484,8 @@ class WarmupTab:
         help_label = ctk.CTkLabel(
             dialog,
             text="Creates/updates config/account_profiles.json and syncs src/uploaders/redgifs/adspower_config.json.",
-            font=("Segoe UI", 10),
-            text_color=("#64748B", "#94A3B8"),
+            font=("Segoe UI", 13),
+            text_color=("#64748B", "#D1D5DB"),
             justify="left",
         )
         help_label.grid(row=9, column=0, columnspan=2, sticky="ew", padx=16, pady=(8, 6))
@@ -847,7 +1564,7 @@ class WarmupTab:
             height=34,
             fg_color=ACCENT,
             hover_color=ACCENT_HOVER,
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI", 14, "bold"),
             command=_save,
         ).grid(row=0, column=0, sticky="ew", padx=5)
         ctk.CTkButton(
@@ -856,12 +1573,12 @@ class WarmupTab:
             height=34,
             fg_color="#475569",
             hover_color="#334155",
-            font=("Segoe UI", 12),
+            font=("Segoe UI", 13),
             command=dialog.destroy,
         ).grid(row=0, column=1, sticky="ew", padx=5)
 
     def _on_account_change(self, selection):
-        """Handle account dropdown change — update hidden profile_entry and persona info."""
+        """Handle account dropdown change â€” update hidden profile_entry and persona info."""
         if selection not in self._acct_map:
             return
 
@@ -970,8 +1687,16 @@ class WarmupTab:
                 except Exception:
                     account_age_days = None
 
+        # Read poetry warmup settings
+        poetry_warmup = self.poetry_var.get()
+        try:
+            karma_target = int(self.karma_target_entry.get().strip() or "1500")
+        except ValueError:
+            karma_target = 1500
+
         # Disable buttons and reset session display
-        self.start_btn.configure(state="disabled", text=f"Running: {profile_id[:12]}...")
+        mode_label = "Poetry" if poetry_warmup else "Running"
+        self.start_btn.configure(state="disabled", text=f"{mode_label}: {profile_id[:12]}...")
         self.stop_btn.configure(state="normal")
         self.refresh_btn.configure(state="disabled")
         self.is_running = True
@@ -981,7 +1706,8 @@ class WarmupTab:
 
         thread = threading.Thread(
             target=self._warmup_worker,
-            args=(profile_id, persona, grok_key, account_age_days, account_created_at),
+            args=(profile_id, persona, grok_key, account_age_days, account_created_at,
+                  poetry_warmup, karma_target),
             daemon=True,
         )
         thread.start()
@@ -990,13 +1716,14 @@ class WarmupTab:
         self._stop_requested = True
         if self.warmer:
             self.warmer.stop_requested = True
-            self._log("Stop requested — will halt after current cycle...")
+            self._log("Stop requested â€” will halt after current cycle...")
         else:
-            self._log("Stop requested — aborting startup...")
+            self._log("Stop requested â€” aborting startup...")
         self.stop_btn.configure(state="disabled")
 
     def _warmup_worker(self, profile_id, persona, grok_key,
-                       account_age_days=None, account_created_at=None):
+                       account_age_days=None, account_created_at=None,
+                       poetry_warmup=False, karma_target=1500):
         """Background thread: connect browser, run warmup, report results."""
         api_base = self.adspower_config.get(
             "adspower_api_base", "http://localhost:50325")
@@ -1050,7 +1777,9 @@ class WarmupTab:
                     persona=persona,
                     grok_api_key=grok_key,
                     account_age_days=account_age_days,
-                    account_created_at=account_created_at)
+                    account_created_at=account_created_at,
+                    poetry_warmup=poetry_warmup,
+                    karma_target=karma_target)
                 self.warmer = warmer
                 if self._stop_requested:
                     warmer.stop_requested = True
@@ -1061,13 +1790,18 @@ class WarmupTab:
                     f"Day {day}, max posts today: {max_posts}, "
                     f"{len(warmer.general_subs)} general subs")
                 self.app.after(0, self.progress_label.configure,
-                    text=f"Day {day} — warmup in progress...")
+                    text=f"Day {day} â€” warmup in progress...")
 
                 # 4. Attach log handler to capture warmer output
                 warmer_logger = logging.getLogger("core.account_warmer")
                 handler = _GUILogHandler(self.log_box, self.app)
                 handler.setFormatter(logging.Formatter(
-                    "%(asctime)s %(message)s", datefmt="%H:%M:%S"))
+                    f"%(asctime)s [{profile_id}] %(message)s", datefmt="%H:%M:%S"))
+                my_thread = threading.current_thread().ident
+                handler.addFilter(
+                    type("_TF", (logging.Filter,),
+                         {"filter": lambda self, r, tid=my_thread: r.thread == tid})()
+                )
                 warmer_logger.addHandler(handler)
                 self._log_handler = handler
 
@@ -1176,6 +1910,9 @@ class WarmupTab:
         if profile_id:
             self._refresh_stats()
 
+        # Refresh stats overview panel
+        self._refresh_stats_panel()
+
     def _show_activity_popout(self):
         """Open a popout window showing all actions from the last session."""
         log = self._last_action_log
@@ -1206,7 +1943,7 @@ class WarmupTab:
             f"{len(joins)} joins  |  "
             f"{len(clicks)} posts clicked"
         )
-        ctk.CTkLabel(win, text=summary, font=("Segoe UI", 12, "bold")).grid(
+        ctk.CTkLabel(win, text=summary, font=("Segoe UI", 14, "bold")).grid(
             row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
 
         # Scrollable activity list
@@ -1217,7 +1954,7 @@ class WarmupTab:
         # Header row
         headers = [("Time", 60), ("Type", 70), ("Sub", 130), ("Detail", 0), ("Status", 70)]
         for col, (hdr, w) in enumerate(headers):
-            lbl = ctk.CTkLabel(scroll, text=hdr, font=("Segoe UI", 11, "bold"),
+            lbl = ctk.CTkLabel(scroll, text=hdr, font=("Segoe UI", 13, "bold"),
                                anchor="w")
             lbl.grid(row=0, column=col, sticky="ew", padx=4, pady=(0, 4))
 
@@ -1236,22 +1973,22 @@ class WarmupTab:
             bg = ("#FFFFFF", "#1A1A2E") if i % 2 == 0 else ("#F3F4F6", "#1E2033")
 
             ctk.CTkLabel(scroll, text=action.get("ts", ""),
-                         font=("Consolas", 11), fg_color=bg, anchor="w").grid(
+                         font=("Consolas", 13), fg_color=bg, anchor="w").grid(
                 row=row, column=0, sticky="ew", padx=4, pady=1)
 
             type_lbl = ctk.CTkLabel(
                 scroll, text=action.get("type", ""),
-                font=("Segoe UI", 11, "bold"), fg_color=bg,
+                font=("Segoe UI", 13, "bold"), fg_color=bg,
                 text_color=type_colors.get(action.get("type"), "#6B7280"),
                 anchor="w")
             type_lbl.grid(row=row, column=1, sticky="ew", padx=4, pady=1)
 
             sub = action.get("sub", "")
             sub_lbl = ctk.CTkLabel(scroll, text=f"r/{sub}" if sub else "",
-                                   font=("Segoe UI", 11), fg_color=bg, anchor="w")
+                                   font=("Segoe UI", 13), fg_color=bg, anchor="w")
             sub_lbl.grid(row=row, column=2, sticky="ew", padx=4, pady=1)
 
-            # Detail — show text, make URL clickable
+            # Detail â€” show text, make URL clickable
             detail_text = action.get("text", "") or action.get("url", "")
             url = action.get("url", "")
             detail_frame = ctk.CTkFrame(scroll, fg_color=bg)
@@ -1260,25 +1997,25 @@ class WarmupTab:
             if detail_text:
                 det_lbl = ctk.CTkLabel(
                     detail_frame, text=detail_text[:80],
-                    font=("Segoe UI", 11), anchor="w")
+                    font=("Segoe UI", 13), anchor="w")
                 det_lbl.pack(side="left", fill="x", expand=True)
 
             if url and url.startswith("http"):
                 link_btn = ctk.CTkButton(
                     detail_frame, text="Open", width=45,
-                    font=("Segoe UI", 10), height=22,
+                    font=("Segoe UI", 13), height=22,
                     fg_color="#334155", hover_color="#1F2937",
                     command=lambda u=url: webbrowser.open(u))
                 link_btn.pack(side="right", padx=(4, 0))
 
             status = action.get("status", "ok")
             status_lbl = ctk.CTkLabel(
-                scroll, text=status, font=("Segoe UI", 11, "bold"), fg_color=bg,
+                scroll, text=status, font=("Segoe UI", 13, "bold"), fg_color=bg,
                 text_color=status_colors.get(status, "#6B7280"), anchor="w")
             status_lbl.grid(row=row, column=4, sticky="ew", padx=4, pady=1)
 
     # ================================================================
-    # RUN ALL — multi-account warmup with proxy rotation & ban detection
+    # RUN ALL â€” multi-account warmup with proxy rotation & ban detection
     # ================================================================
 
     def _load_ban_log(self):
@@ -1303,8 +2040,12 @@ class WarmupTab:
             with open(SCHEDULE_CONFIG_PATH, encoding="utf-8") as f:
                 cfg = json.load(f)
             groups = cfg.get("proxy_groups", {})
-            return {k: v.get("rotation_url", "") for k, v in groups.items()}
-        except Exception:
+            return {
+                str(k).strip(): (v.get("rotation_url", "") or "").strip()
+                for k, v in groups.items()
+            }
+        except Exception as e:
+            logger.error(f"Failed to load rotation URLs: {e}")
             return {}
 
     def _discover_all_accounts(self):
@@ -1371,21 +2112,55 @@ class WarmupTab:
 
     def _rotate_proxy(self, group):
         """Hit the proxy rotation URL for a fresh IP."""
-        url = self._rotation_urls.get(group, "")
+        url = (self._rotation_urls.get(group) or "").strip()
         if not url:
-            return
-        for attempt in range(3):
+            self.app.after(
+                0, self._log,
+                f"[{group}] ROTATION BLOCKED: no rotation URL configured. Stopping this group."
+            )
+            return False
+
+        self.app.after(0, self._log, f"[{group}] Rotating proxy IP before next account...")
+        fail_tokens = ("error", "failed", "invalid", "forbidden", "denied")
+        for attempt in range(1, 4):
             try:
-                resp = requests.get(url, timeout=15)
+                resp = requests.get(url, timeout=20)
+                body = (resp.text or "").strip()
+                snippet = body[:120].replace("\n", " ")
+
                 if resp.status_code == 200:
-                    logger.info(f"[{group}] Rotated proxy IP")
-                    time.sleep(5)
-                    return
-                logger.warning(f"[{group}] Rotation returned {resp.status_code}, retry {attempt+1}/3")
+                    # Some providers return HTTP 200 with an error string in body.
+                    if body and any(token in body.lower() for token in fail_tokens):
+                        self.app.after(
+                            0, self._log,
+                            f"[{group}] Rotation response looked invalid (attempt {attempt}/3): {snippet}"
+                        )
+                    else:
+                        self.app.after(
+                            0, self._log,
+                            f"[{group}] Rotation OK (attempt {attempt}/3)"
+                        )
+                        # Give the provider time to fully apply the new IP.
+                        # fxdx.in mobile tunnels need ~30s to fully establish.
+                        time.sleep(30)
+                        return True
+                else:
+                    self.app.after(
+                        0, self._log,
+                        f"[{group}] Rotation HTTP {resp.status_code} (attempt {attempt}/3): {snippet}"
+                    )
             except Exception as e:
-                logger.warning(f"[{group}] Proxy rotation attempt {attempt+1}/3 failed: {e}")
-            time.sleep(3)
-        logger.error(f"[{group}] PROXY ROTATION FAILED after 3 attempts")
+                self.app.after(
+                    0, self._log,
+                    f"[{group}] Rotation request failed (attempt {attempt}/3): {e}"
+                )
+            time.sleep(5)
+
+        self.app.after(
+            0, self._log,
+            f"[{group}] ROTATION FAILED after 3 attempts. Stopping this group to avoid bans."
+        )
+        return False
 
     def _load_profile_data(self, username):
         """Load persona/attributes from account_profiles.json if available."""
@@ -1435,6 +2210,7 @@ class WarmupTab:
         self._group_results = {}
         self._group_warmers = {}
         self._group_threads = {}
+        self._rotation_failed_groups = set()
 
         # UI state
         self.run_all_btn.configure(state="disabled", text="Running All...")
@@ -1448,15 +2224,15 @@ class WarmupTab:
             lbl.configure(text=f"{grp}: discovering...")
         self._run_all_overall_label.configure(text="Discovering accounts...")
 
-        thread = threading.Thread(target=self._run_all_orchestrator,
+        thread = threading.Thread(target=self._continuous_orchestrator,
                                   args=(grok_key,), daemon=True)
         thread.start()
 
-    def _run_all_orchestrator(self, grok_key):
-        """Background thread: discover accounts, load configs, launch group threads, wait."""
-        self.app.after(0, self._log, "=== RUN ALL ACCOUNTS ===")
+    def _continuous_orchestrator(self, grok_key):
+        """Background thread: continuous cycling until all accounts hit daily caps or stopped."""
+        self.app.after(0, self._log, "=== CONTINUOUS WARMUP STARTED ===")
 
-        # Discover accounts
+        # Discover accounts (once — the pool doesn't change mid-run)
         self.app.after(0, self._log, "Discovering accounts from AdsPower...")
         accounts_by_group = self._discover_all_accounts()
         if not accounts_by_group:
@@ -1467,41 +2243,137 @@ class WarmupTab:
         for grp, accs in sorted(accounts_by_group.items()):
             self.app.after(0, self._log, f"  {grp}: {len(accs)} accounts")
 
-        # Load configs
+        # Load configs (once)
         self._ban_log = self._load_ban_log()
         self._rotation_urls = self._load_rotation_urls()
 
-        permabanned = sum(1 for v in self._ban_log.values()
-                          if v.get("status") == "permaban")
-        if permabanned:
-            self.app.after(0, self._log, f"Skipping {permabanned} permabanned accounts")
+        missing_rotation = [
+            grp for grp in sorted(accounts_by_group.keys())
+            if not (self._rotation_urls.get(grp) or "").strip()
+        ]
+        if missing_rotation:
+            self.app.after(
+                0, self._log,
+                f"ERROR: Missing rotation URL for group(s): {', '.join(missing_rotation)}. "
+                "Aborting to avoid ban risk.")
+            self.app.after(0, self._on_run_all_complete)
+            return
 
+        # Collect active (non-banned) account IDs
+        all_account_ids = set()
+        for accs in accounts_by_group.values():
+            for acc in accs:
+                all_account_ids.add(acc["adspower_id"])
+        permabanned_ids = {k for k, v in self._ban_log.items()
+                           if v.get("status") == "permaban"}
+        active_ids = all_account_ids - permabanned_ids
+
+        if permabanned_ids:
+            self.app.after(0, self._log,
+                           f"Skipping {len(permabanned_ids)} permabanned accounts")
         self.app.after(0, self._log,
                        f"Rotation URLs: {', '.join(self._rotation_urls.keys())}")
         self.app.after(0, self._log,
-                       "Architecture: 1 thread per proxy group, sequential within group\n")
+                       "Mode: continuous cycling until all at daily cap\n")
+
+        # Initialize cycling state
+        self._daily_caps_cache = {}
+        self._accounts_at_cap = set()
+        self._cycle_count = 0
+        self._last_cycle_date = datetime.now().strftime("%Y-%m-%d")
+
+        while not self._run_all_stop:
+            self._cycle_count += 1
+            self.app.after(0, self._log, f"\n{'='*50}")
+            self.app.after(0, self._log,
+                           f"=== CYCLE {self._cycle_count} STARTING ===")
+            self.app.after(0, self._log, f"{'='*50}")
+            self.app.after(0, self._update_cycle_status)
+
+            cycle_had_activity = self._run_one_cycle(
+                accounts_by_group, grok_key, active_ids)
+
+            if self._run_all_stop:
+                break
+
+            # Check if ALL active accounts hit their daily cap
+            if self._accounts_at_cap >= active_ids:
+                self.app.after(0, self._log,
+                               "\n=== ALL ACCOUNTS AT DAILY CAP — DONE ===")
+                break
+
+            if not cycle_had_activity:
+                self.app.after(0, self._log,
+                               "\n=== NO ACTIVITY THIS CYCLE — STOPPING ===")
+                break
+
+            # Inter-cycle pause: 45-120 minutes
+            pause_min = random.randint(45, 120)
+            pause_sec = pause_min * 60
+            self._next_cycle_time = datetime.now() + timedelta(seconds=pause_sec)
+
+            self.app.after(0, self._log,
+                           f"\n--- Cycle {self._cycle_count} complete. "
+                           f"Next in {pause_min}min "
+                           f"(at {self._next_cycle_time.strftime('%H:%M:%S')}) ---")
+            self.app.after(0, self._update_cycle_status)
+            self.app.after(0, self._start_countdown_timer)
+
+            # Interruptible sleep
+            for _ in range(pause_sec):
+                if self._run_all_stop:
+                    break
+                time.sleep(1)
+
+            self._next_cycle_time = None
+            self.app.after(0, self._stop_countdown_timer)
+
+        self.app.after(0, self._on_run_all_complete)
+
+    def _run_one_cycle(self, accounts_by_group, grok_key, active_ids):
+        """Run one full pass through all proxy groups. Returns True if any account ran."""
+        # Day boundary check — reset caps at midnight
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        if self._last_cycle_date != current_date:
+            self._daily_caps_cache = {}
+            self._accounts_at_cap = set()
+            self._last_cycle_date = current_date
+            self.app.after(0, self._log, "=== NEW DAY — daily caps reset ===")
+
+        self._group_results = {}
+        self._group_warmers = {}
+        self._group_threads = {}
+        self._rotation_failed_groups = set()
+
+        # Reset group labels
+        for grp, lbl in self._group_labels.items():
+            self.app.after(0, lambda l=lbl, g=grp: l.configure(
+                text=f"{g}: starting..."))
 
         # Launch 1 thread per proxy group
         for grp, accs in accounts_by_group.items():
             if self._run_all_stop:
                 break
-            t = threading.Thread(target=self._run_group,
+            t = threading.Thread(target=self._run_group_cycle,
                                  args=(grp, accs, grok_key), daemon=True)
             self._group_threads[grp] = t
             t.start()
 
-        # Wait for all group threads to finish
+        # Wait for all group threads
         for grp, t in self._group_threads.items():
             t.join()
 
-        self.app.after(0, self._on_run_all_complete)
+        # Check if any account actually ran
+        total_ran = 0
+        for results in self._group_results.values():
+            total_ran += sum(1 for r in results if r.get("status") == "success")
+        return total_ran > 0
 
-    def _run_group(self, group, accounts, grok_key):
-        """Process all accounts in one proxy group sequentially."""
+    def _run_group_cycle(self, group, accounts, grok_key):
+        """Process accounts in one proxy group for one cycle, checking daily caps."""
         results = []
         self._group_results[group] = results
 
-        # Shuffle so accounts don't always run in the same order
         shuffled = list(accounts)
         random.shuffle(shuffled)
 
@@ -1509,37 +2381,109 @@ class WarmupTab:
         active = [a for a in shuffled
                   if self._ban_log.get(a["adspower_id"], {}).get("status") != "permaban"]
 
-        skipped = len(accounts) - len(active)
-        self.app.after(0, self._log,
-                       f"[{group}] Starting: {len(active)} accounts"
-                       f" ({skipped} permabanned)")
-        self.app.after(0, self._update_group_progress, group, 0, 0, len(active))
+        # Check daily caps — skip accounts already at their cap
+        runnable = []
+        for acc in active:
+            pid = acc["adspower_id"]
 
-        for i, acc in enumerate(active):
+            # Get or create daily cap for this account (cached per day)
+            if pid not in self._daily_caps_cache:
+                day = get_warmup_day(pid) or 1
+                self._daily_caps_cache[pid] = get_daily_cap(day)
+
+            cap = self._daily_caps_cache[pid]
+            totals = get_daily_totals(pid)
+
+            remaining_comments = cap["comments"] - totals.get("comments", 0)
+            remaining_joins = cap["joins"] - totals.get("joins", 0)
+
+            if remaining_comments <= 0 and remaining_joins <= 0:
+                with self._run_all_lock:
+                    self._accounts_at_cap.add(pid)
+                self.app.after(0, self._log,
+                               f"[{group}] {acc['username']}: AT CAP "
+                               f"({totals['comments']}/{cap['comments']}c, "
+                               f"{totals['joins']}/{cap['joins']}j) — skip")
+                continue
+
+            # Attach remaining budget for _warmup_one_account to pass through
+            acc["_remaining_budget"] = {
+                "comments": max(0, remaining_comments),
+                "joins": max(0, remaining_joins),
+            }
+            runnable.append(acc)
+
+        at_cap = len(active) - len(runnable)
+        self.app.after(0, self._log,
+                       f"[{group}] C{self._cycle_count}: {len(runnable)} runnable, "
+                       f"{at_cap} at cap")
+
+        if not runnable:
+            self.app.after(0, self._update_group_progress, group, 0, 0, 0)
+            return
+
+        self.app.after(0, self._update_group_progress, group, 0, 0, len(runnable))
+
+        # Rotate proxy BEFORE the first account
+        self.app.after(0, self._log, f"[{group}] Initial proxy rotation...")
+        if not self._rotate_proxy(group):
+            self.app.after(0, self._log,
+                           f"[{group}] Initial rotation failed — skipping group this cycle")
+            self._rotation_failed_groups.add(group)
+            return
+
+        for i, acc in enumerate(runnable):
+            if group in self._rotation_failed_groups:
+                self.app.after(0, self._log,
+                               f"[{group}] STOPPING GROUP: rotation failed.")
+                break
+
             if self._run_all_stop:
                 self.app.after(0, self._log, f"[{group}] Stop requested — halting")
                 break
 
+            budget = acc.get("_remaining_budget", {})
             self.app.after(0, self._log,
-                           f"\n--- [{group}] {i+1}/{len(active)}: {acc['username']} ---")
-            self.app.after(0, self._update_group_progress, group, i + 1, i, len(active))
+                           f"\n--- [{group}] C{self._cycle_count} {i+1}/{len(runnable)}: "
+                           f"{acc['username']} (budget: {budget.get('comments', '?')}c "
+                           f"{budget.get('joins', '?')}j) ---")
+            self.app.after(0, self._update_group_progress, group, i + 1, i, len(runnable))
 
             result = self._warmup_one_account(acc, group, grok_key)
             results.append(result)
 
             status = result.get("status", "?")
-            self.app.after(0, self._log,
-                           f"[{group}] {acc['username']}: {status}")
-            if status == "banned":
+            self.app.after(0, self._log, f"[{group}] {acc['username']}: {status}")
+
+            # Cascade breaker: if session was instant-fail (tunnel dead),
+            # pause the group and rotate before hammering the next account.
+            result_stats = result.get("stats", {})
+            result_sec = result_stats.get("total_sec", -1) if isinstance(result_stats, dict) else -1
+            if status in ("success", "error", "browser_crashed") and result_sec >= 0 and result_sec < 30:
                 self.app.after(0, self._log,
-                               f"[{group}] {acc['username']}: BANNED — continuing")
+                               f"[{group}] Tunnel appears dead ({result_sec}s session). "
+                               f"Pausing 60s + rotating before next account...")
+                for _ in range(60):
+                    if self._run_all_stop:
+                        break
+                    time.sleep(1)
+                if not self._run_all_stop:
+                    if not self._rotate_proxy(group):
+                        with self._run_all_lock:
+                            self._rotation_failed_groups.add(group)
+
+            if group in self._rotation_failed_groups:
+                self.app.after(0, self._log,
+                               f"[{group}] STOPPING GROUP after {acc['username']}: "
+                               f"rotation failed.")
+                break
 
         done = len(results)
-        self.app.after(0, self._update_group_progress, group, done, done, len(active))
-        self.app.after(0, self._log, f"[{group}] Group done: {done} processed")
+        self.app.after(0, self._update_group_progress, group, done, done, len(runnable))
+        self.app.after(0, self._log, f"[{group}] Cycle {self._cycle_count} done: {done} processed")
 
     def _warmup_one_account(self, account, group, grok_key):
-        """Full per-account lifecycle: browser start → ban check → warmup → stop → rotate."""
+        """Full per-account lifecycle: browser start â†’ ban check â†’ warmup â†’ stop â†’ rotate."""
         profile_key = account["username"]
         adspower_id = account["adspower_id"]
         api_base = self.adspower_config.get(
@@ -1558,6 +2502,7 @@ class WarmupTab:
         # Start AdsPower browser
         self.app.after(0, self._log, f"  Starting browser {adspower_id}...")
         browser_started = False
+        _acct_start_ts = 0
         try:
             resp = requests.get(
                 f"{api_base}/api/v1/browser/start"
@@ -1577,6 +2522,7 @@ class WarmupTab:
             return {"profile": profile_key, "status": "failed",
                     "adspower_id": adspower_id, "error": "no CDP endpoint"}
         browser_started = True
+        _acct_start_ts = time.time()
 
         from playwright.sync_api import sync_playwright
         from core.account_warmer import AccountWarmer
@@ -1653,7 +2599,7 @@ class WarmupTab:
 
                 if status == BanStatus.UNKNOWN_ERROR:
                     if "not logged in" in detail:
-                        self.app.after(0, self._log, "  NOT LOGGED IN — skipping")
+                        self.app.after(0, self._log, "  NOT LOGGED IN â€” skipping")
                         return {"profile": profile_key, "status": "not_logged_in",
                                 "adspower_id": adspower_id, "proxy_group": group}
                     crash_phrases = [
@@ -1666,11 +2612,20 @@ class WarmupTab:
                         return {"profile": profile_key, "status": "browser_crashed",
                                 "adspower_id": adspower_id, "error": detail}
                     self.app.after(0, self._log,
-                                   f"  Health check issue: {detail} — proceeding")
+                                   f"  Health check issue: {detail} â€” proceeding")
 
                 self.app.after(0, self._log, f"  Account healthy: {detail}")
 
                 # === WARMUP ===
+                # Poetry mode: read from global GUI toggle
+                poetry_on = self.poetry_all_var.get()
+                try:
+                    poetry_karma = int(self.karma_all_entry.get().strip() or "1500")
+                except (ValueError, AttributeError):
+                    poetry_karma = 1500
+                if poetry_on:
+                    self.app.after(0, self._log,
+                                   f"  Poetry mode ON (karma target: {poetry_karma})")
                 warmer = AccountWarmer(
                     adspower_id, page,
                     persona=persona_data or None,
@@ -1679,6 +2634,8 @@ class WarmupTab:
                     account_age_days=age_days,
                     account_created_at=created_at,
                     username=profile_key,
+                    poetry_warmup=poetry_on,
+                    karma_target=poetry_karma,
                 )
                 self._group_warmers[group] = warmer
 
@@ -1689,11 +2646,18 @@ class WarmupTab:
                 warmer_logger = logging.getLogger("core.account_warmer")
                 handler = _GUILogHandler(self.log_box, self.app)
                 handler.setFormatter(logging.Formatter(
-                    "%(asctime)s %(message)s", datefmt="%H:%M:%S"))
+                    f"%(asctime)s [{group}:{profile_key}] %(message)s",
+                    datefmt="%H:%M:%S"))
+                my_thread = threading.current_thread().ident
+                handler.addFilter(
+                    type("_TF", (logging.Filter,),
+                         {"filter": lambda self, r, tid=my_thread: r.thread == tid})()
+                )
                 warmer_logger.addHandler(handler)
 
                 try:
-                    stats = warmer.run_daily_warmup()
+                    stats = warmer.run_daily_warmup(
+                        remaining_budget=account.get("_remaining_budget"))
                 finally:
                     try:
                         warmer_logger.removeHandler(handler)
@@ -1702,7 +2666,7 @@ class WarmupTab:
                     self._group_warmers[group] = None
 
                 self.app.after(0, self._log,
-                               f"  DONE — {stats['comments']}cmt, {stats['upvotes']}up, "
+                               f"  DONE â€” {stats['comments']}cmt, {stats['upvotes']}up, "
                                f"{stats['joins']}join, {stats['total_sec']//60}m")
 
                 # Clear non-permaban entries on success
@@ -1741,30 +2705,90 @@ class WarmupTab:
                 except Exception as e:
                     self.app.after(0, self._log, f"  Failed to stop browser: {e}")
 
-            # 2. Rotate proxy AFTER browser closed — guaranteed every time
-            time.sleep(10)
-            self._rotate_proxy(group)
+            # 2. Rotate proxy AFTER browser closed.
+            #    SKIP rotation if the session was instant-fail (< 30s) —
+            #    rotating a dead tunnel just makes it worse.
+            elapsed = time.time() - _acct_start_ts if _acct_start_ts else 0
+            if elapsed < 30:
+                self.app.after(0, self._log,
+                               f"  Skipping rotation — session was only {int(elapsed)}s "
+                               f"(tunnel likely dead, rotating won't help)")
+                time.sleep(5)
+            else:
+                time.sleep(10)
+                if not self._rotate_proxy(group):
+                    with self._run_all_lock:
+                        self._rotation_failed_groups.add(group)
 
     def _stop_run_all(self):
         """Stop all running warmups gracefully."""
         self._run_all_stop = True
+        self._stop_countdown_timer()
         self.stop_all_btn.configure(state="disabled")
-        self.app.after(0, self._log, "Stop All requested — finishing current accounts...")
-        # Signal any active warmers to stop
+        self.app.after(0, self._log,
+                       "Stop All requested — finishing current account, "
+                       "will not start next cycle...")
         for grp, warmer in self._group_warmers.items():
             if warmer:
                 warmer.stop_requested = True
+
+    def _reset_today(self):
+        """Clear today's warmup flags and daily cap cache."""
+        count = reset_today_warmup()
+        self._daily_caps_cache = {}
+        self._accounts_at_cap = set()
+        self._log(f"Reset {count} account(s) + daily caps — all can re-run today.")
+        self._refresh_stats_panel()
+
+    # ── Countdown timer for inter-cycle pauses ──
+
+    def _update_cycle_status(self):
+        """Update the overall label with cycle info."""
+        capped = len(self._accounts_at_cap)
+        if self._next_cycle_time:
+            remaining = (self._next_cycle_time - datetime.now()).total_seconds()
+            mins = max(0, int(remaining // 60))
+            secs = max(0, int(remaining % 60))
+            self._run_all_overall_label.configure(
+                text=f"Cycle {self._cycle_count} done | {capped} at cap | "
+                     f"Next cycle in {mins}m {secs}s")
+        else:
+            self._run_all_overall_label.configure(
+                text=f"Cycle {self._cycle_count} running | {capped} at cap")
+
+    def _start_countdown_timer(self):
+        """Start a periodic UI refresh showing time until next cycle."""
+        self._stop_countdown_timer()
+        self._countdown_tick()
+
+    def _countdown_tick(self):
+        """Update the countdown display every 30 seconds."""
+        if not self._run_all_active or self._run_all_stop or not self._next_cycle_time:
+            return
+        self._update_cycle_status()
+        self._cycle_timer_id = self.app.after(30000, self._countdown_tick)
+
+    def _stop_countdown_timer(self):
+        """Cancel the countdown timer."""
+        if self._cycle_timer_id:
+            try:
+                self.app.after_cancel(self._cycle_timer_id)
+            except Exception:
+                pass
+            self._cycle_timer_id = None
 
     def _on_run_all_complete(self):
         """Re-enable buttons and show summary (runs on main thread)."""
         self._run_all_active = False
         self._run_all_stop = False
+        self._stop_countdown_timer()
+        self._next_cycle_time = None
         self.run_all_btn.configure(state="normal",
                                    text="Start All Accounts (Auto-Discover from AdsPower)")
         self.stop_all_btn.configure(state="disabled")
         self.start_btn.configure(state="normal")
 
-        # Summarize results
+        # Summarize results from last cycle
         all_results = []
         for grp, results in self._group_results.items():
             all_results.extend(results)
@@ -1774,7 +2798,8 @@ class WarmupTab:
             s = r.get("status", "unknown")
             by_status.setdefault(s, []).append(r.get("profile", "?"))
 
-        self._log("\n=== RUN ALL COMPLETE ===")
+        self._log(f"\n=== CONTINUOUS WARMUP COMPLETE — {self._cycle_count} cycles ===")
+        self._log(f"  Accounts at daily cap: {len(self._accounts_at_cap)}")
         for status, names in sorted(by_status.items()):
             self._log(f"  {status}: {len(names)}")
             if status in ("banned", "shadowbanned", "not_logged_in",
@@ -1782,15 +2807,30 @@ class WarmupTab:
                 for n in names:
                     self._log(f"    - {n}")
 
+        if self._rotation_failed_groups:
+            self._log(f"  rotation_failed_groups: {len(self._rotation_failed_groups)}")
+            for grp in sorted(self._rotation_failed_groups):
+                self._log(f"    - {grp}")
+
         total = len(all_results)
         success = len(by_status.get("success", []))
         banned = len(by_status.get("banned", []))
-        errors = len(by_status.get("error", []))
+        capped = len(self._accounts_at_cap)
         self._run_all_overall_label.configure(
-            text=f"Done — {success}/{total} success, {banned} banned, {errors} errors")
+            text=(
+                f"Done — {self._cycle_count} cycles | "
+                f"{success}/{total} last cycle, "
+                f"{capped} at daily cap, {banned} banned"
+            ))
 
         # Save final ban log
         self._save_ban_log()
+
+        # Clean up daily caps (keep for stats panel, cleared on next start)
+        self._daily_caps_cache = {}
+
+        # Refresh stats panel with latest data
+        self._refresh_stats_panel()
 
     def _update_group_progress(self, group, current, done, total):
         """Update a group's status label (called via app.after from worker threads)."""
@@ -1806,4 +2846,5 @@ class WarmupTab:
         for grp, accs in self._group_results.items():
             pass  # count is already in done_all
         self._run_all_overall_label.configure(
-            text=f"Running — {done_all} done, {banned_all} banned")
+            text=f"Running â€” {done_all} done, {banned_all} banned")
+

@@ -1602,13 +1602,46 @@ class AutoPosterTab:
         if self._grok_key:
             self.grok_key_entry.insert(0, self._grok_key)
 
-        sec_row = 0  # Track section rows in self.parent
+        # Onboarding header
+        total_accounts = len(self.profiles_data)
+        overview = ctk.CTkFrame(
+            self.parent,
+            fg_color=HERO_FG,
+            corner_radius=12,
+            border_width=1,
+            border_color=("#C8D9F1", "#314055"),
+        )
+        overview.grid(row=0, column=0, sticky="ew", padx=5, pady=(0, 8))
+        overview.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            overview,
+            text="Reddit Automation Hub",
+            font=("Segoe UI", 18, "bold"),
+            text_color=("#0F172A", "#E2E8F0"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 2))
+
+        ctk.CTkLabel(
+            overview,
+            text=(
+                "Quick start: 1) Select or add accounts. 2) Add campaign folders. "
+                "3) Analyze content. 4) Start posting.\n"
+                f"Configured AdsPower accounts: {total_accounts}"
+            ),
+            font=("Segoe UI", 12),
+            text_color=("#334155", "#94A3B8"),
+            justify="left",
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 10))
+
+        sec_row = 1  # Track section rows in self.parent
 
         # ═════════════════════════════════════════════════════════════
         # SECTION 0: ACCOUNTS (default open)
         # ═════════════════════════════════════════════════════════════
         _, acct_content, _, _ = _collapsible_section(
-            self.parent, "Accounts", row=sec_row, default_open=True,
+            self.parent, "Step 1: Accounts", row=sec_row, default_open=True,
             right_widgets=[
                 ("+ New Account",
                  lambda: self._open_add_account_dialog(blank=True),
@@ -1715,7 +1748,7 @@ class AutoPosterTab:
         # ═════════════════════════════════════════════════════════════
         self._camp_card, camp_content, self._camp_toggle, self._camp_title = \
             _collapsible_section(
-                self.parent, "Content Campaigns", row=sec_row, default_open=False,
+                self.parent, "Step 2: Content Campaigns", row=sec_row, default_open=False,
                 right_widgets=[
                     ("+ Add Folder", self._add_campaign, ACCENT, ACCENT_HOVER),
                 ])
@@ -1740,7 +1773,7 @@ class AutoPosterTab:
         # SECTION 2: WARMUP SETTINGS (default collapsed)
         # ═════════════════════════════════════════════════════════════
         _, warmup_content, _, _ = _collapsible_section(
-            self.parent, "Warmup Settings", row=sec_row, default_open=False,
+            self.parent, "Step 3: Warmup Settings", row=sec_row, default_open=False,
             right_widgets=[
                 ("Warmup Only", self._start_standalone_warmup,
                  "#1E40AF", "#1E3A8A"),
@@ -1902,7 +1935,7 @@ class AutoPosterTab:
         # SECTION 3: POSTING SETTINGS (default collapsed)
         # ═════════════════════════════════════════════════════════════
         _, post_content, _, _ = _collapsible_section(
-            self.parent, "Posting Settings", row=sec_row, default_open=False)
+            self.parent, "Step 4: Posting Settings", row=sec_row, default_open=False)
 
         # Hidden compat widget
         self.subs_per_file = ctk.CTkEntry(post_content, width=40)
@@ -2005,8 +2038,17 @@ class AutoPosterTab:
         action_card.grid(row=sec_row, column=0, sticky="ew", padx=5, pady=(0, 6))
         action_card.grid_columnconfigure(0, weight=1)
 
+        ctk.CTkLabel(
+            action_card,
+            text="Run order: Analyze Content first, then Post to Reddit. Warmup Only is optional and account-specific.",
+            font=("Segoe UI", 11),
+            text_color=("#4B5563", "#94A3B8"),
+            justify="left",
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
+
         btn_frame = ctk.CTkFrame(action_card, fg_color="transparent")
-        btn_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        btn_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(6, 4))
         btn_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.analyze_btn = ctk.CTkButton(
@@ -2052,20 +2094,20 @@ class AutoPosterTab:
                  "The current action will finish before stopping.")
 
         self.progress_bar = ctk.CTkProgressBar(action_card, progress_color=ACCENT)
-        self.progress_bar.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 2))
+        self.progress_bar.grid(row=2, column=0, sticky="ew", padx=10, pady=(4, 2))
         self.progress_bar.set(0)
 
         self.progress_label = ctk.CTkLabel(
             action_card, text="", font=("Segoe UI", 11), text_color=("#4B5563", "#94A3B8")
         )
-        self.progress_label.grid(row=2, column=0, sticky="w", padx=10, pady=(0, 8))
+        self.progress_label.grid(row=3, column=0, sticky="w", padx=10, pady=(0, 8))
         sec_row += 1
 
         # ═════════════════════════════════════════════════════════════
         # SECTION 5: ACTIVITY LOG (default open)
         # ═════════════════════════════════════════════════════════════
         _, log_content, _, _ = _collapsible_section(
-            self.parent, "Activity Log", row=sec_row, default_open=True,
+            self.parent, "Step 5: Activity Log", row=sec_row, default_open=True,
             right_widgets=[
                 ("Check Performance", self._start_perf_check,
                  "#7C3AED", "#6D28D9"),
@@ -2092,7 +2134,7 @@ class AutoPosterTab:
         # SECTION 6: PERFORMANCE (default collapsed)
         # ═════════════════════════════════════════════════════════════
         _, perf_content, _, _ = _collapsible_section(
-            self.parent, "Performance", row=sec_row, default_open=False)
+            self.parent, "Step 6: Performance", row=sec_row, default_open=False)
         perf_content.grid_columnconfigure((0, 1), weight=1)
 
         import tkinter.ttk as ttk

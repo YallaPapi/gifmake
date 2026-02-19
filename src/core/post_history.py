@@ -3,11 +3,22 @@ Post history tracking with SQLite.
 Tracks what content was posted where, prevents duplicates, tracks bans.
 """
 import os
+import random
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
 DB_PATH = os.path.join(DB_DIR, "post_history.db")
+
+# Daily caps per warmup phase — max totals across all sessions in one day.
+# Each value is a (min, max) range; a random value is picked once per day per account.
+DAILY_CAP_RANGES = {
+    "phase1": {"comments": (4, 6),   "joins": (1, 2)},   # days 1-3
+    "phase2": {"comments": (6, 10),  "joins": (2, 3)},   # days 4-7
+    "phase3": {"comments": (8, 12),  "joins": (2, 4)},   # days 8-14
+    "phase4": {"comments": (10, 15), "joins": (3, 4)},   # days 15-21
+    "phase5": {"comments": (12, 18), "joins": (3, 5)},   # days 22+
+}
 
 
 def _get_conn():
@@ -81,6 +92,26 @@ def _init_tables(conn):
 
         CREATE INDEX IF NOT EXISTS idx_cqs_profile
             ON cqs_checks(profile_id, checked_at);
+
+        CREATE TABLE IF NOT EXISTS warmup_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL,
+            date TEXT NOT NULL,
+            comments INTEGER DEFAULT 0,
+            upvotes INTEGER DEFAULT 0,
+            downvotes INTEGER DEFAULT 0,
+            joins INTEGER DEFAULT 0,
+            posts_clicked INTEGER DEFAULT 0,
+            subs_browsed INTEGER DEFAULT 0,
+            sessions INTEGER DEFAULT 0,
+            scrolls INTEGER DEFAULT 0,
+            duration_sec INTEGER DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ws_profile_date
+            ON warmup_sessions(profile_id, date);
     """)
     conn.commit()
 
@@ -430,6 +461,97 @@ def get_warmup_status(profile_id):
         conn.close()
 
 
+def get_warmed_today_ids():
+    """Return set of profile_ids that already completed warmup today."""
+    conn = _get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        rows = conn.execute(
+            "SELECT profile_id FROM account_warmup WHERE last_activity_date=?",
+            (today,)
+        ).fetchall()
+        return {row["profile_id"] for row in rows}
+    finally:
+        conn.close()
+
+
+def reset_today_warmup():
+    """Clear today's warmup flags so all accounts can re-run.
+
+    Sets last_activity_date to yesterday for any profile marked today.
+    Preserves all counters and history.
+    """
+    conn = _get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        cur = conn.execute(
+            "UPDATE account_warmup SET last_activity_date=? WHERE last_activity_date=?",
+            (yesterday, today))
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
+def get_daily_cap(day):
+    """Return randomized daily cap dict for the given warmup day number.
+
+    Returns {"comments": int, "joins": int}.
+    """
+    if day <= 3:
+        ranges = DAILY_CAP_RANGES["phase1"]
+    elif day <= 7:
+        ranges = DAILY_CAP_RANGES["phase2"]
+    elif day <= 14:
+        ranges = DAILY_CAP_RANGES["phase3"]
+    elif day <= 21:
+        ranges = DAILY_CAP_RANGES["phase4"]
+    else:
+        ranges = DAILY_CAP_RANGES["phase5"]
+    return {
+        "comments": random.randint(*ranges["comments"]),
+        "joins": random.randint(*ranges["joins"]),
+    }
+
+
+def get_daily_totals(profile_id):
+    """Get today's cumulative comments and joins for one profile.
+
+    Queries warmup_sessions table (append-only, one row per run).
+    Returns {"comments": int, "joins": int, "run_count": int}.
+    """
+    conn = _get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        row = conn.execute(
+            """SELECT COALESCE(SUM(comments), 0) as comments,
+                      COALESCE(SUM(joins), 0) as joins,
+                      COUNT(*) as run_count
+               FROM warmup_sessions
+               WHERE date=? AND profile_id=?""",
+            (today, profile_id)
+        ).fetchone()
+        return dict(row) if row else {"comments": 0, "joins": 0, "run_count": 0}
+    finally:
+        conn.close()
+
+
+def get_all_warmup_stats():
+    """Get warmup stats for ALL profiles. Returns list of dicts."""
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT profile_id, started_at, last_activity_date,
+                      total_posts, total_comments, total_upvotes, total_joins, status
+               FROM account_warmup
+               ORDER BY last_activity_date DESC, total_comments DESC"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def record_activity(profile_id, activity_type, count=1):
     """Increment activity counters. activity_type: posts, comments, upvotes, joins."""
     col_map = {
@@ -449,6 +571,68 @@ def record_activity(profile_id, activity_type, count=1):
             (count, today, profile_id)
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def record_session(profile_id, started_at, finished_at, stats):
+    """Write one warmup session row. Called once per run_daily_warmup()."""
+    conn = _get_conn()
+    try:
+        date_str = finished_at[:10]  # YYYY-MM-DD from ISO string
+        conn.execute(
+            """INSERT INTO warmup_sessions
+               (profile_id, started_at, finished_at, date,
+                comments, upvotes, downvotes, joins,
+                posts_clicked, subs_browsed, sessions, scrolls, duration_sec)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (profile_id, started_at, finished_at, date_str,
+             stats.get("comments", 0), stats.get("upvotes", 0),
+             stats.get("downvotes", 0), stats.get("joins", 0),
+             stats.get("posts_clicked", 0), stats.get("subs_browsed", 0),
+             stats.get("sessions", 0), stats.get("scrolls", 0),
+             stats.get("total_sec", 0))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_today_sessions(profile_id=None):
+    """Get today's session totals, optionally filtered by profile_id.
+
+    Returns list of dicts with profile_id and summed stats for today.
+    """
+    conn = _get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        if profile_id:
+            rows = conn.execute(
+                """SELECT profile_id,
+                          SUM(comments) as comments, SUM(upvotes) as upvotes,
+                          SUM(downvotes) as downvotes, SUM(joins) as joins,
+                          SUM(posts_clicked) as posts_clicked,
+                          SUM(duration_sec) as duration_sec,
+                          COUNT(*) as run_count
+                   FROM warmup_sessions
+                   WHERE date=? AND profile_id=?
+                   GROUP BY profile_id""",
+                (today, profile_id)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT profile_id,
+                          SUM(comments) as comments, SUM(upvotes) as upvotes,
+                          SUM(downvotes) as downvotes, SUM(joins) as joins,
+                          SUM(posts_clicked) as posts_clicked,
+                          SUM(duration_sec) as duration_sec,
+                          COUNT(*) as run_count
+                   FROM warmup_sessions
+                   WHERE date=?
+                   GROUP BY profile_id""",
+                (today,)
+            ).fetchall()
+        return [dict(row) for row in rows]
     finally:
         conn.close()
 

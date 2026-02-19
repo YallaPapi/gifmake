@@ -1,4 +1,4 @@
-"""
+﻿"""
 GifMake - Video to GIF Converter
 Main application window using CustomTkinter
 """
@@ -73,9 +73,39 @@ class GifMakeApp(ctk.CTk):
         "140%": 1.4,
         "150%": 1.5,
     }
+    FONT_SIZE_OPTIONS = {
+        "Small (12)": 12,
+        "Medium (14)": 14,
+        "Large (16)": 16,
+        "XL (18)": 18,
+        "XXL (20)": 20,
+    }
     UI_SETTINGS_PATH = os.path.join(
         os.path.dirname(__file__), "..", "..", "config", "ui_settings.json"
     )
+    CONVERTER_TAB_NAME = "Video Converter"
+    REDDIT_TAB_NAME = "Reddit"
+    WARMUP_TAB_NAME = "Warmup"
+
+    COLORS = {
+        "app_bg": ("#EEF2F8", "#0A1220"),
+        "hero_bg": ("#E7F2FF", "#11223A"),
+        "hero_border": ("#BFD9F8", "#1E3A5F"),
+        "card_bg": ("#F9FBFF", "#121C2D"),
+        "card_inner": ("#FFFFFF", "#172134"),
+        "card_border": ("#D5DFEE", "#24344D"),
+        "accent": ("#0F766E", "#0F766E"),
+        "accent_hover": ("#115E59", "#115E59"),
+        "primary_btn": ("#0284C7", "#0369A1"),
+        "primary_btn_hover": ("#0369A1", "#075985"),
+        "danger": ("#B91C1C", "#991B1B"),
+        "danger_hover": ("#991B1B", "#7F1D1D"),
+        "text": ("#0F172A", "#F8FAFC"),
+        "muted": ("#475569", "#94A3B8"),
+        "subtle": ("#64748B", "#64748B"),
+        "soft_bg": ("#E9EFF8", "#0F172A"),
+        "status_ok": ("#166534", "#4ADE80"),
+    }
 
     def __init__(self):
         super().__init__()
@@ -86,10 +116,11 @@ class GifMakeApp(ctk.CTk):
 
         # Window configuration
         self.title("GifMake Studio")
-        self.geometry("980x960")
-        self.minsize(700, 800)
+        self.geometry("1120x960")
+        self.minsize(860, 760)
+        self.configure(fg_color=self.COLORS["app_bg"])
 
-        # Theme — load saved preference, default dark
+        # Theme â€” load saved preference, default dark
         self._appearance_mode = self._load_appearance_mode()
         ctk.set_appearance_mode(self._appearance_mode)
         ctk.set_default_color_theme("blue")
@@ -115,7 +146,7 @@ class GifMakeApp(ctk.CTk):
     def _create_widgets(self):
         """Create all UI widgets."""
 
-        # Configure root window grid — tabview expands, scale bar stays at bottom
+        # Configure root window grid so tab content expands while footer stays fixed.
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=0)
@@ -124,27 +155,27 @@ class GifMakeApp(ctk.CTk):
         self.tabview = ctk.CTkTabview(
             self,
             fg_color="transparent",
-            segmented_button_fg_color=("#DDE6F2", "#1F2937"),
-            segmented_button_selected_color=("#0F766E", "#0F766E"),
-            segmented_button_selected_hover_color=("#115E59", "#115E59"),
-            segmented_button_unselected_hover_color=("#CBD5E1", "#334155"),
-            text_color=("#0F172A", "#E2E8F0"),
+            segmented_button_fg_color=self.COLORS["soft_bg"],
+            segmented_button_selected_color=self.COLORS["accent"],
+            segmented_button_selected_hover_color=self.COLORS["accent_hover"],
+            segmented_button_unselected_hover_color=("#D7E1EF", "#1E293B"),
+            text_color=self.COLORS["text"],
         )
         self.tabview.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
 
-        # Tab 1: Video Converter (existing functionality)
-        converter_tab = self.tabview.add("Video Converter")
+        # Tab 1: Video converter
+        converter_tab = self.tabview.add(self.CONVERTER_TAB_NAME)
         converter_tab.grid_columnconfigure(0, weight=1)
         converter_tab.grid_rowconfigure(0, weight=1)
 
-        # Tab 2: Reddit (combined poster + warmup)
-        reddit_tab = self.tabview.add("Reddit")
+        # Tab 2: Reddit automation
+        reddit_tab = self.tabview.add(self.REDDIT_TAB_NAME)
         reddit_tab.grid_columnconfigure(0, weight=1)
         reddit_tab.grid_rowconfigure(0, weight=1)
 
-        # Tab 3: Warmup (standalone multi-account warmup with proxy rotation)
+        # Tab 3: standalone warmup
         if WARMUP_TAB_AVAILABLE:
-            warmup_tab = self.tabview.add("Warmup")
+            warmup_tab = self.tabview.add(self.WARMUP_TAB_NAME)
             warmup_tab.grid_columnconfigure(0, weight=1)
             warmup_tab.grid_rowconfigure(0, weight=1)
             warmup_scroll = ctk.CTkScrollableFrame(
@@ -178,7 +209,7 @@ class GifMakeApp(ctk.CTk):
         reddit_scroll.grid_columnconfigure(0, weight=1)
         scroll_row = 0
 
-        # --- Poster section ---
+        # Poster section
         if AUTO_POSTER_AVAILABLE:
             poster_frame = ctk.CTkFrame(reddit_scroll, fg_color="transparent")
             poster_frame.grid(row=scroll_row, column=0, sticky="nsew", padx=30, pady=20)
@@ -186,53 +217,91 @@ class GifMakeApp(ctk.CTk):
             self.auto_poster = AutoPosterTab(poster_frame, self)
             scroll_row += 1
 
-        # Configure row weights for proper expansion
-        self.main_frame.grid_rowconfigure(0, weight=0)  # Mode toggle
-        self.main_frame.grid_rowconfigure(1, weight=0)  # Drop zone
-        self.main_frame.grid_rowconfigure(2, weight=0)  # File info
-        self.main_frame.grid_rowconfigure(3, weight=0)  # Video list (bulk mode)
-        self.main_frame.grid_rowconfigure(4, weight=0)  # Settings header
-        self.main_frame.grid_rowconfigure(5, weight=0)  # Settings frame
-        self.main_frame.grid_rowconfigure(6, weight=0)  # Generate button
-        self.main_frame.grid_rowconfigure(7, weight=0)  # Progress
+        # Layout rows in logical workflow order.
+        for row in range(10):
+            self.main_frame.grid_rowconfigure(row, weight=0)
 
-        # ===== MODE TOGGLE =====
+        # Intro and workflow sections
+        self._create_converter_hero()
         self._create_mode_toggle()
-
-        # ===== DROP ZONE =====
         self._create_drop_zone()
-
-        # ===== FILE INFO SECTION =====
         self._create_file_info_section()
-
-        # ===== VIDEO LIST (BULK MODE) =====
         self._create_video_list_section()
-
-        # ===== SETTINGS SECTION =====
         self._create_settings_section()
-
-        # ===== GENERATE BUTTON =====
         self._create_generate_button()
-
-        # ===== PROGRESS SECTION =====
         self._create_progress_section()
+
+    def _create_converter_hero(self):
+        """Create an explanatory hero card for first-time users."""
+        self.hero_frame = ctk.CTkFrame(
+            self.main_frame,
+            corner_radius=14,
+            border_width=1,
+            border_color=self.COLORS["hero_border"],
+            fg_color=self.COLORS["hero_bg"],
+        )
+        self.hero_frame.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        self.hero_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            self.hero_frame,
+            text="Create GIFs Or Clip Packs In 3 Steps",
+            font=ctk.CTkFont(size=22, weight="bold"),
+            text_color=self.COLORS["text"],
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 4))
+
+        ctk.CTkLabel(
+            self.hero_frame,
+            text=(
+                "1) Choose one video or an entire folder.\n"
+                "2) Set duration, quality, and output options.\n"
+                "3) Generate files and optionally send them to Reddit workflows."
+            ),
+            font=ctk.CTkFont(size=12),
+            text_color=self.COLORS["muted"],
+            justify="left",
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 12))
 
     def _create_mode_toggle(self):
         """Create the mode toggle switch between Single Video and Bulk Folder."""
 
-        self.mode_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.mode_frame.grid(row=0, column=0, sticky="ew", pady=(0, 15))
+        self.mode_frame = ctk.CTkFrame(
+            self.main_frame,
+            corner_radius=12,
+            border_width=1,
+            border_color=self.COLORS["card_border"],
+            fg_color=self.COLORS["card_bg"],
+        )
+        self.mode_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         self.mode_frame.grid_columnconfigure(0, weight=1)
 
-        # Centered container for the segmented button
+        ctk.CTkLabel(
+            self.mode_frame,
+            text="Step 1: Choose Input Type",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=self.COLORS["text"],
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 4))
+
+        ctk.CTkLabel(
+            self.mode_frame,
+            text="Single Video processes one file. Bulk Folder creates outputs for every video in one folder.",
+            font=ctk.CTkFont(size=12),
+            text_color=self.COLORS["muted"],
+            anchor="w",
+            justify="left",
+        ).grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 10))
+
         self.mode_center_frame = ctk.CTkFrame(self.mode_frame, fg_color="transparent")
-        self.mode_center_frame.grid(row=0, column=0)
+        self.mode_center_frame.grid(row=2, column=0, padx=14, pady=(0, 12), sticky="w")
 
         self.mode_label = ctk.CTkLabel(
             self.mode_center_frame,
-            text="Mode:",
+            text="Mode",
             font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=("#333333", "#FFFFFF")
+            text_color=self.COLORS["text"],
         )
         self.mode_label.grid(row=0, column=0, padx=(0, 10))
 
@@ -241,70 +310,77 @@ class GifMakeApp(ctk.CTk):
             values=["Single Video", "Bulk Folder"],
             command=self.on_mode_change,
             font=ctk.CTkFont(size=12),
-            selected_color=("#1E88E5", "#1565C0"),
-            selected_hover_color=("#1976D2", "#0D47A1")
+            selected_color=self.COLORS["accent"],
+            selected_hover_color=self.COLORS["accent_hover"],
+            unselected_color=self.COLORS["soft_bg"],
+            unselected_hover_color=("#D8E2F1", "#1F2937"),
         )
         self.mode_segmented.set("Single Video")
         self.mode_segmented.grid(row=0, column=1)
 
     def _create_drop_zone(self):
-        """Create the drag and drop zone for video selection."""
+        """Create the input selection area."""
 
         self.drop_frame = ctk.CTkFrame(
             self.main_frame,
-            height=150,
-            corner_radius=15,
-            border_width=2,
-            border_color=("#3B8ED0", "#1F6AA5"),
-            fg_color=("#EAF3FF", "#1F2937")
+            height=190,
+            corner_radius=14,
+            border_width=1,
+            border_color=self.COLORS["card_border"],
+            fg_color=self.COLORS["card_inner"],
         )
-        self.drop_frame.grid(row=1, column=0, sticky="ew", pady=(0, 20))
+        self.drop_frame.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         self.drop_frame.grid_columnconfigure(0, weight=1)
         self.drop_frame.grid_rowconfigure(0, weight=1)
         self.drop_frame.grid_propagate(False)
 
-        # Drop zone content
         self.drop_content_frame = ctk.CTkFrame(self.drop_frame, fg_color="transparent")
         self.drop_content_frame.grid(row=0, column=0, sticky="nsew")
         self.drop_content_frame.grid_columnconfigure(0, weight=1)
 
-        # Icon label (using text as placeholder)
         self.drop_icon = ctk.CTkLabel(
             self.drop_content_frame,
-            text="[VIDEO]",
-            font=ctk.CTkFont(size=28, weight="bold"),
-            text_color=("#3B8ED0", "#5DADE2")
+            text="VIDEO",
+            font=ctk.CTkFont(size=22, weight="bold"),
+            text_color=self.COLORS["primary_btn"],
         )
-        self.drop_icon.grid(row=0, column=0, pady=(25, 5))
+        self.drop_icon.grid(row=0, column=0, pady=(20, 4))
 
-        # Main drop text
         self.drop_label = ctk.CTkLabel(
             self.drop_content_frame,
-            text="Drag & Drop Video Here",
+            text="Click To Select A Video",
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color=("#333333", "#FFFFFF")
+            text_color=self.COLORS["text"],
         )
         self.drop_label.grid(row=1, column=0, pady=(0, 5))
 
-        # Secondary text
         self.drop_sublabel = ctk.CTkLabel(
             self.drop_content_frame,
-            text="or Click to Browse",
+            text="Use Bulk Folder mode above if you want to process multiple files at once.",
             font=ctk.CTkFont(size=12),
-            text_color=("#333333", "#CBD5E1")
+            text_color=self.COLORS["muted"],
         )
         self.drop_sublabel.grid(row=2, column=0, pady=(0, 5))
 
-        # Supported formats
         self.format_label = ctk.CTkLabel(
             self.drop_content_frame,
             text="Supports: MP4, MOV, AVI, MKV, WebM",
             font=ctk.CTkFont(size=11),
-            text_color=("#555555", "#94A3B8")
+            text_color=self.COLORS["subtle"],
         )
-        self.format_label.grid(row=3, column=0, pady=(0, 15))
+        self.format_label.grid(row=3, column=0, pady=(0, 8))
 
-        # Make the entire drop zone clickable
+        self.select_source_btn = ctk.CTkButton(
+            self.drop_content_frame,
+            text="Choose Video",
+            width=180,
+            fg_color=self.COLORS["primary_btn"],
+            hover_color=self.COLORS["primary_btn_hover"],
+            command=self.select_video_or_folder,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        self.select_source_btn.grid(row=4, column=0, pady=(0, 14))
+
         self.drop_frame.bind("<Button-1>", lambda e: self.select_video_or_folder())
         self.drop_content_frame.bind("<Button-1>", lambda e: self.select_video_or_folder())
         self.drop_icon.bind("<Button-1>", lambda e: self.select_video_or_folder())
@@ -312,7 +388,6 @@ class GifMakeApp(ctk.CTk):
         self.drop_sublabel.bind("<Button-1>", lambda e: self.select_video_or_folder())
         self.format_label.bind("<Button-1>", lambda e: self.select_video_or_folder())
 
-        # Cursor change on hover
         for widget in [self.drop_frame, self.drop_content_frame, self.drop_icon,
                        self.drop_label, self.drop_sublabel, self.format_label]:
             widget.configure(cursor="hand2")
@@ -320,54 +395,65 @@ class GifMakeApp(ctk.CTk):
     def _create_file_info_section(self):
         """Create the file information display section."""
 
-        self.info_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.info_frame.grid(row=2, column=0, sticky="ew", pady=(0, 15))
+        self.info_frame = ctk.CTkFrame(
+            self.main_frame,
+            corner_radius=12,
+            border_width=1,
+            border_color=self.COLORS["card_border"],
+            fg_color=self.COLORS["card_bg"],
+        )
+        self.info_frame.grid(row=3, column=0, sticky="ew", pady=(0, 12))
         self.info_frame.grid_columnconfigure(0, weight=1)
 
-        # Selected file display
+        ctk.CTkLabel(
+            self.info_frame,
+            text="Input Summary",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=self.COLORS["text"],
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 4))
+
         self.selected_label = ctk.CTkLabel(
             self.info_frame,
-            text="Selected: No video selected",
+            text="Selected source: none",
             font=ctk.CTkFont(size=13),
-            text_color=("#333333", "#CBD5E1"),
-            anchor="w"
+            text_color=self.COLORS["muted"],
+            anchor="w",
         )
-        self.selected_label.grid(row=0, column=0, sticky="w")
+        self.selected_label.grid(row=1, column=0, sticky="w", padx=14)
 
-        # Duration and estimated GIFs
         self.duration_label = ctk.CTkLabel(
             self.info_frame,
-            text="Duration: --:-- | Estimated GIFs: --",
+            text="Duration: --:-- | Estimated outputs: --",
             font=ctk.CTkFont(size=12),
-            text_color=("#444444", "#CBD5E1"),
-            anchor="w"
+            text_color=self.COLORS["subtle"],
+            anchor="w",
         )
-        self.duration_label.grid(row=1, column=0, sticky="w", pady=(5, 0))
+        self.duration_label.grid(row=2, column=0, sticky="w", padx=14, pady=(4, 10))
 
     def _create_video_list_section(self):
         """Create the scrollable video list section for bulk mode."""
 
-        # Container frame for the video list (hidden by default)
         self.video_list_container = ctk.CTkFrame(
             self.main_frame,
-            corner_radius=10,
-            fg_color=("#F5F5F5", "#1F2937")
+            corner_radius=12,
+            border_width=1,
+            border_color=self.COLORS["card_border"],
+            fg_color=self.COLORS["card_bg"],
         )
-        # Initially hidden - will be shown in bulk mode
-        self.video_list_container.grid(row=3, column=0, sticky="ew", pady=(0, 15))
+        self.video_list_container.grid(row=4, column=0, sticky="ew", pady=(0, 12))
         self.video_list_container.grid_columnconfigure(0, weight=1)
-        self.video_list_container.grid_remove()  # Hide initially
+        self.video_list_container.grid_remove()
 
-        # Header with collapse toggle
         self.video_list_header = ctk.CTkFrame(self.video_list_container, fg_color="transparent")
-        self.video_list_header.grid(row=0, column=0, sticky="ew", padx=15, pady=(10, 5))
+        self.video_list_header.grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 5))
         self.video_list_header.grid_columnconfigure(1, weight=1)
 
         self.video_list_title = ctk.CTkLabel(
             self.video_list_header,
-            text="Videos in Folder",
+            text="Detected Videos",
             font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=("#333333", "#FFFFFF")
+            text_color=self.COLORS["text"],
         )
         self.video_list_title.grid(row=0, column=0, sticky="w")
 
@@ -375,59 +461,77 @@ class GifMakeApp(ctk.CTk):
             self.video_list_header,
             text="",
             font=ctk.CTkFont(size=11),
-            text_color=("#333333", "#CBD5E1")
+            text_color=self.COLORS["muted"],
         )
         self.video_count_label.grid(row=0, column=1, sticky="w", padx=(10, 0))
 
-        # Scrollable frame for video list
         self.video_list_scroll = ctk.CTkScrollableFrame(
             self.video_list_container,
             height=150,
-            fg_color="transparent"
+            fg_color=self.COLORS["card_inner"],
+            border_width=1,
+            border_color=self.COLORS["card_border"],
         )
         self.video_list_scroll.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
         self.video_list_scroll.grid_columnconfigure(0, weight=1)
 
-        # Store video item widgets
         self.video_item_widgets = []
 
     def _create_settings_section(self):
-        """Create the settings panel with all controls."""
+        """Create the settings panel with grouped controls."""
 
-        # Settings header
         self.settings_header = ctk.CTkLabel(
             self.main_frame,
-            text="Settings",
+            text="Step 2: Configure Output",
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color=("#333333", "#FFFFFF")
+            text_color=self.COLORS["text"],
+            anchor="w",
         )
-        self.settings_header.grid(row=4, column=0, sticky="w", pady=(10, 15))
+        self.settings_header.grid(row=5, column=0, sticky="w", pady=(8, 4))
 
-        # Settings container
+        self.settings_hint = ctk.CTkLabel(
+            self.main_frame,
+            text="Set output quality first, then choose destination and optional publishing actions.",
+            font=ctk.CTkFont(size=12),
+            text_color=self.COLORS["muted"],
+            anchor="w",
+            justify="left",
+        )
+        self.settings_hint.grid(row=6, column=0, sticky="w", pady=(0, 10))
+
         self.settings_frame = ctk.CTkFrame(
             self.main_frame,
-            corner_radius=10,
-            fg_color=("#F5F5F5", "#1F2937")
+            corner_radius=12,
+            border_width=1,
+            border_color=self.COLORS["card_border"],
+            fg_color=self.COLORS["card_bg"],
         )
-        self.settings_frame.grid(row=5, column=0, sticky="ew", pady=(0, 20))
+        self.settings_frame.grid(row=7, column=0, sticky="ew", pady=(0, 16))
         self.settings_frame.grid_columnconfigure(1, weight=1)
 
         row = 0
-        padding_y = 15
-        padding_x = 20
+        padding_x = 18
 
-        # ----- GIF Duration -----
+        # Processing settings
+        ctk.CTkLabel(
+            self.settings_frame,
+            text="Conversion Settings",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=self.COLORS["text"],
+            anchor="w",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=padding_x, pady=(12, 8))
+        row += 1
+
         self.duration_setting_label = ctk.CTkLabel(
             self.settings_frame,
             text="GIF Duration:",
             font=ctk.CTkFont(size=13),
-            anchor="w"
+            anchor="w",
         )
-        self.duration_setting_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=(padding_y, 5))
+        self.duration_setting_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=(0, 8))
 
-        # Duration slider frame
         self.slider_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
-        self.slider_frame.grid(row=row, column=1, sticky="ew", padx=padding_x, pady=(padding_y, 5))
+        self.slider_frame.grid(row=row, column=1, sticky="ew", padx=padding_x, pady=(0, 8))
         self.slider_frame.grid_columnconfigure(0, weight=1)
 
         self.duration_slider = ctk.CTkSlider(
@@ -436,233 +540,164 @@ class GifMakeApp(ctk.CTk):
             to=10,
             number_of_steps=9,
             command=self.on_duration_change,
-            width=200
+            width=240,
         )
-        self.duration_slider.set(4)  # Default 4 seconds
+        self.duration_slider.set(4)
         self.duration_slider.grid(row=0, column=0, sticky="w")
 
         self.duration_value_label = ctk.CTkLabel(
             self.slider_frame,
             text="4 seconds",
             font=ctk.CTkFont(size=12),
-            width=80,
-            anchor="w"
+            width=90,
+            anchor="w",
         )
         self.duration_value_label.grid(row=0, column=1, padx=(15, 0))
-
         row += 1
 
-        # ----- Frame Rate -----
         self.fps_label = ctk.CTkLabel(
             self.settings_frame,
             text="Frame Rate:",
             font=ctk.CTkFont(size=13),
-            anchor="w"
+            anchor="w",
         )
-        self.fps_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=padding_y)
+        self.fps_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=(0, 10))
 
         self.fps_dropdown = ctk.CTkComboBox(
             self.settings_frame,
             values=self.FPS_OPTIONS,
             width=150,
             state="readonly",
-            font=ctk.CTkFont(size=12)
+            font=ctk.CTkFont(size=12),
         )
-        self.fps_dropdown.set("15")  # Default 15 FPS
-        self.fps_dropdown.grid(row=row, column=1, sticky="w", padx=padding_x, pady=padding_y)
+        self.fps_dropdown.set("15")
+        self.fps_dropdown.grid(row=row, column=1, sticky="w", padx=padding_x, pady=(0, 10))
 
         self.fps_unit_label = ctk.CTkLabel(
             self.settings_frame,
             text="FPS",
             font=ctk.CTkFont(size=12),
-            text_color=("#333333", "#CBD5E1")
+            text_color=self.COLORS["subtle"],
         )
-        self.fps_unit_label.grid(row=row, column=1, sticky="w", padx=(175, 0), pady=padding_y)
-
+        self.fps_unit_label.grid(row=row, column=1, sticky="w", padx=(175, 0), pady=(0, 10))
         row += 1
 
-        # ----- Resolution -----
         self.resolution_label = ctk.CTkLabel(
             self.settings_frame,
             text="Resolution:",
             font=ctk.CTkFont(size=13),
-            anchor="w"
+            anchor="w",
         )
-        self.resolution_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=padding_y)
+        self.resolution_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=(0, 10))
 
         self.resolution_dropdown = ctk.CTkComboBox(
             self.settings_frame,
             values=list(self.RESOLUTION_OPTIONS.keys()),
             width=150,
             state="readonly",
-            font=ctk.CTkFont(size=12)
+            font=ctk.CTkFont(size=12),
         )
-        self.resolution_dropdown.set("480p")  # Default 480p
-        self.resolution_dropdown.grid(row=row, column=1, sticky="w", padx=padding_x, pady=padding_y)
-
+        self.resolution_dropdown.set("480p")
+        self.resolution_dropdown.grid(row=row, column=1, sticky="w", padx=padding_x, pady=(0, 10))
         row += 1
 
-        # ----- Output Format -----
         self.output_format_label = ctk.CTkLabel(
             self.settings_frame,
             text="Output Format:",
             font=ctk.CTkFont(size=13),
-            anchor="w"
+            anchor="w",
         )
-        self.output_format_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=padding_y)
+        self.output_format_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=(0, 10))
 
         self.format_segmented = ctk.CTkSegmentedButton(
             self.settings_frame,
             values=["GIF", "Video Clips"],
             command=self.on_format_change,
             font=ctk.CTkFont(size=12),
-            selected_color=("#1E88E5", "#1565C0"),
-            selected_hover_color=("#1976D2", "#0D47A1")
+            selected_color=self.COLORS["accent"],
+            selected_hover_color=self.COLORS["accent_hover"],
+            unselected_color=self.COLORS["soft_bg"],
+            unselected_hover_color=("#D8E2F1", "#1F2937"),
         )
         self.format_segmented.set("GIF")
-        self.format_segmented.grid(row=row, column=1, sticky="w", padx=padding_x, pady=padding_y)
-
+        self.format_segmented.grid(row=row, column=1, sticky="w", padx=padding_x, pady=(0, 10))
         row += 1
 
-        # ----- Preserve Quality (only shown for Video Clips) -----
         self.preserve_quality_checkbox = ctk.CTkCheckBox(
             self.settings_frame,
-            text="Lossless cut (keep original quality — no re-encoding)",
+            text="Lossless cut (keep original quality without re-encoding)",
             font=ctk.CTkFont(size=13),
         )
-        self.preserve_quality_checkbox.grid(row=row, column=0, columnspan=2, sticky="w", padx=padding_x, pady=(0, padding_y))
-        self.preserve_quality_checkbox.grid_remove()  # Hidden by default (only for Video Clips)
-
+        self.preserve_quality_checkbox.grid(row=row, column=0, columnspan=2, sticky="w", padx=padding_x, pady=(0, 10))
+        self.preserve_quality_checkbox.grid_remove()
         row += 1
 
-        # ----- Upload to RedGIFs -----
-        self.upload_checkbox = ctk.CTkCheckBox(
+        # Delivery settings
+        ctk.CTkLabel(
             self.settings_frame,
-            text="Upload to RedGIFs after generation",
+            text="Destination",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=self.COLORS["text"],
+            anchor="w",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=padding_x, pady=(2, 8))
+        row += 1
+
+        self.output_label = ctk.CTkLabel(
+            self.settings_frame,
+            text="Output Folder:",
             font=ctk.CTkFont(size=13),
-            command=self.on_upload_toggle
+            anchor="w",
         )
-        self.upload_checkbox.grid(row=row, column=0, columnspan=2, sticky="w", padx=padding_x, pady=padding_y)
+        self.output_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=(0, 10))
 
-        if not UPLOAD_AVAILABLE:
-            self.upload_checkbox.configure(state="disabled")
+        self.output_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        self.output_frame.grid(row=row, column=1, sticky="ew", padx=padding_x, pady=(0, 10))
+        self.output_frame.grid_columnconfigure(0, weight=1)
 
+        self.output_entry = ctk.CTkEntry(
+            self.output_frame,
+            placeholder_text="Defaults to the same folder as the source video",
+            font=ctk.CTkFont(size=12),
+            width=250,
+        )
+        self.output_entry.grid(row=0, column=0, sticky="ew")
+
+        self.output_browse_btn = ctk.CTkButton(
+            self.output_frame,
+            text="Browse",
+            width=90,
+            font=ctk.CTkFont(size=12),
+            fg_color=self.COLORS["soft_bg"],
+            hover_color=("#D3DEEE", "#1E293B"),
+            text_color=self.COLORS["text"],
+            command=self.select_output_folder,
+        )
+        self.output_browse_btn.grid(row=0, column=1, padx=(10, 0))
         row += 1
 
-        # Upload settings frame (expandable)
-        self.upload_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=("#EAECF0", "#111827"))
-        self.upload_settings_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=padding_x, pady=(0, padding_y))
-        self.upload_settings_frame.grid_columnconfigure(1, weight=1)
-        self.upload_settings_frame.grid_remove()  # Hidden by default
-
-        # Browser profile (AdsPower) selector
-        upload_row = 0
-        self.browser_profile_label = ctk.CTkLabel(
-            self.upload_settings_frame, text="Browser Profile:", font=ctk.CTkFont(size=12))
-        self.browser_profile_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=(10, 5))
-
-        profile_row = ctk.CTkFrame(self.upload_settings_frame, fg_color="transparent")
-        profile_row.grid(row=upload_row, column=1, sticky="ew", padx=10, pady=(10, 5))
-
-        self.browser_profile_var = ctk.StringVar(value="")
-        self.browser_profile_dropdown = ctk.CTkOptionMenu(
-            profile_row, variable=self.browser_profile_var,
-            values=["No profiles"], width=200)
-        self.browser_profile_dropdown.pack(side="left", padx=(0, 6))
-
-        ctk.CTkButton(
-            profile_row, text="+ Add", width=60,
-            fg_color="#334155", hover_color="#1F2937",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            command=self._add_browser_profile
-        ).pack(side="left", padx=2)
-
-        ctk.CTkButton(
-            profile_row, text="Remove", width=65,
-            fg_color="#B91C1C", hover_color="#991B1B",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            command=self._remove_browser_profile
-        ).pack(side="left", padx=2)
-
-        self._load_browser_profiles()
-
-        upload_row += 1
-
-        # API Account dropdown (legacy — RedGifs API tokens)
-        self.account_label = ctk.CTkLabel(self.upload_settings_frame, text="API Account:", font=ctk.CTkFont(size=12))
-        self.account_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=5)
-
-        self.account_dropdown = ctk.CTkComboBox(
-            self.upload_settings_frame,
-            values=["Loading..."],
-            width=150,
-            state="readonly",
-            command=self.on_account_change
-        )
-        self.account_dropdown.grid(row=upload_row, column=1, sticky="w", padx=10, pady=5)
-
-        upload_row += 1
-
-        # Tags
-        self.tags_label = ctk.CTkLabel(self.upload_settings_frame, text="Tags:", font=ctk.CTkFont(size=12))
-        self.tags_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=5)
-
-        self.tags_entry = ctk.CTkEntry(self.upload_settings_frame, placeholder_text="Comma-separated tags")
-        self.tags_entry.grid(row=upload_row, column=1, sticky="ew", padx=10, pady=5)
-
-        upload_row += 1
-
-        # Description
-        self.desc_label = ctk.CTkLabel(self.upload_settings_frame, text="Description:", font=ctk.CTkFont(size=12))
-        self.desc_label.grid(row=upload_row, column=0, sticky="nw", padx=10, pady=5)
-
-        self.desc_textbox = ctk.CTkTextbox(self.upload_settings_frame, height=60)
-        self.desc_textbox.grid(row=upload_row, column=1, sticky="ew", padx=10, pady=5)
-
-        upload_row += 1
-
-        # Content Type
-        self.content_label = ctk.CTkLabel(self.upload_settings_frame, text="Content Type:", font=ctk.CTkFont(size=12))
-        self.content_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=5)
-
-        self.content_dropdown = ctk.CTkComboBox(
-            self.upload_settings_frame,
-            values=["Solo Female", "Solo Male", "Couple", "Group"],
-            width=150,
-            state="readonly"
-        )
-        self.content_dropdown.grid(row=upload_row, column=1, sticky="w", padx=10, pady=5)
-
-        upload_row += 1
-
-        # Keep Audio
-        self.audio_checkbox = ctk.CTkCheckBox(self.upload_settings_frame, text="Keep Audio")
-        self.audio_checkbox.grid(row=upload_row, column=0, columnspan=2, sticky="w", padx=10, pady=(5, 10))
-
-        row += 1
-
-        # ----- Add to Reddit Campaign -----
         campaign_row = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
-        campaign_row.grid(row=row, column=0, columnspan=2, sticky="ew",
-                          padx=padding_x, pady=(0, padding_y))
+        campaign_row.grid(row=row, column=0, columnspan=2, sticky="ew", padx=padding_x, pady=(0, 10))
 
         self.reddit_campaign_checkbox = ctk.CTkCheckBox(
             campaign_row,
-            text="Add to Reddit campaign",
+            text="Add output folder to Reddit campaign queue",
             font=ctk.CTkFont(size=13),
         )
         self.reddit_campaign_checkbox.pack(side="left")
 
         ctk.CTkLabel(
-            campaign_row, text="Account:",
+            campaign_row,
+            text="Account:",
             font=ctk.CTkFont(size=12),
-            text_color=("#555555", "#94A3B8"),
+            text_color=self.COLORS["muted"],
         ).pack(side="left", padx=(15, 5))
 
         self.campaign_profile_var = ctk.StringVar()
         self.campaign_profile_dropdown = ctk.CTkOptionMenu(
-            campaign_row, variable=self.campaign_profile_var,
-            values=["No profiles"], width=200,
+            campaign_row,
+            variable=self.campaign_profile_var,
+            values=["No profiles"],
+            width=220,
             font=ctk.CTkFont(size=12),
         )
         self.campaign_profile_dropdown.pack(side="left")
@@ -671,98 +706,216 @@ class GifMakeApp(ctk.CTk):
         if not AUTO_POSTER_AVAILABLE:
             self.reddit_campaign_checkbox.configure(state="disabled")
             self.campaign_profile_dropdown.configure(state="disabled")
-
         row += 1
 
-        # ----- Output Folder -----
-        self.output_label = ctk.CTkLabel(
+        # Optional RedGIFs publishing
+        ctk.CTkLabel(
             self.settings_frame,
-            text="Output Folder:",
+            text="Optional Publishing",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=self.COLORS["text"],
+            anchor="w",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=padding_x, pady=(2, 8))
+        row += 1
+
+        self.upload_checkbox = ctk.CTkCheckBox(
+            self.settings_frame,
+            text="Upload generated files to RedGIFs after conversion",
             font=ctk.CTkFont(size=13),
-            anchor="w"
+            command=self.on_upload_toggle,
         )
-        self.output_label.grid(row=row, column=0, sticky="w", padx=padding_x, pady=(padding_y, padding_y))
+        self.upload_checkbox.grid(row=row, column=0, columnspan=2, sticky="w", padx=padding_x, pady=(0, 10))
 
-        # Output folder frame
-        self.output_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
-        self.output_frame.grid(row=row, column=1, sticky="ew", padx=padding_x, pady=(padding_y, padding_y))
-        self.output_frame.grid_columnconfigure(0, weight=1)
+        if not UPLOAD_AVAILABLE:
+            self.upload_checkbox.configure(state="disabled")
+        row += 1
 
-        self.output_entry = ctk.CTkEntry(
-            self.output_frame,
-            placeholder_text="Same as input video",
+        self.upload_settings_frame = ctk.CTkFrame(
+            self.settings_frame,
+            corner_radius=10,
+            border_width=1,
+            border_color=self.COLORS["card_border"],
+            fg_color=self.COLORS["card_inner"],
+        )
+        self.upload_settings_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=padding_x, pady=(0, 12))
+        self.upload_settings_frame.grid_columnconfigure(1, weight=1)
+        self.upload_settings_frame.grid_remove()
+
+        upload_row = 0
+        self.browser_profile_label = ctk.CTkLabel(
+            self.upload_settings_frame,
+            text="Browser Profile:",
             font=ctk.CTkFont(size=12),
-            width=250
         )
-        self.output_entry.grid(row=0, column=0, sticky="ew")
+        self.browser_profile_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=(10, 5))
 
-        self.output_browse_btn = ctk.CTkButton(
-            self.output_frame,
-            text="Browse",
-            width=80,
-            font=ctk.CTkFont(size=12),
-            command=self.select_output_folder
+        profile_row = ctk.CTkFrame(self.upload_settings_frame, fg_color="transparent")
+        profile_row.grid(row=upload_row, column=1, sticky="ew", padx=10, pady=(10, 5))
+
+        self.browser_profile_var = ctk.StringVar(value="")
+        self.browser_profile_dropdown = ctk.CTkOptionMenu(
+            profile_row,
+            variable=self.browser_profile_var,
+            values=["No profiles"],
+            width=220,
         )
-        self.output_browse_btn.grid(row=0, column=1, padx=(10, 0))
+        self.browser_profile_dropdown.pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            profile_row,
+            text="+ Add",
+            width=64,
+            fg_color=self.COLORS["soft_bg"],
+            hover_color=("#D3DEEE", "#1E293B"),
+            text_color=self.COLORS["text"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self._add_browser_profile,
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            profile_row,
+            text="Remove",
+            width=72,
+            fg_color=self.COLORS["danger"],
+            hover_color=self.COLORS["danger_hover"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self._remove_browser_profile,
+        ).pack(side="left", padx=2)
+
+        self._load_browser_profiles()
+        upload_row += 1
+
+        self.account_label = ctk.CTkLabel(
+            self.upload_settings_frame,
+            text="API Account:",
+            font=ctk.CTkFont(size=12),
+        )
+        self.account_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=5)
+
+        self.account_dropdown = ctk.CTkComboBox(
+            self.upload_settings_frame,
+            values=["Loading..."],
+            width=180,
+            state="readonly",
+            command=self.on_account_change,
+        )
+        self.account_dropdown.grid(row=upload_row, column=1, sticky="w", padx=10, pady=5)
+        upload_row += 1
+
+        self.tags_label = ctk.CTkLabel(
+            self.upload_settings_frame,
+            text="Tags:",
+            font=ctk.CTkFont(size=12),
+        )
+        self.tags_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=5)
+
+        self.tags_entry = ctk.CTkEntry(
+            self.upload_settings_frame,
+            placeholder_text="Comma-separated tags",
+        )
+        self.tags_entry.grid(row=upload_row, column=1, sticky="ew", padx=10, pady=5)
+        upload_row += 1
+
+        self.desc_label = ctk.CTkLabel(
+            self.upload_settings_frame,
+            text="Description:",
+            font=ctk.CTkFont(size=12),
+        )
+        self.desc_label.grid(row=upload_row, column=0, sticky="nw", padx=10, pady=5)
+
+        self.desc_textbox = ctk.CTkTextbox(self.upload_settings_frame, height=70)
+        self.desc_textbox.grid(row=upload_row, column=1, sticky="ew", padx=10, pady=5)
+        upload_row += 1
+
+        self.content_label = ctk.CTkLabel(
+            self.upload_settings_frame,
+            text="Content Type:",
+            font=ctk.CTkFont(size=12),
+        )
+        self.content_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=5)
+
+        self.content_dropdown = ctk.CTkComboBox(
+            self.upload_settings_frame,
+            values=["Solo Female", "Solo Male", "Couple", "Group"],
+            width=180,
+            state="readonly",
+        )
+        self.content_dropdown.grid(row=upload_row, column=1, sticky="w", padx=10, pady=5)
+        upload_row += 1
+
+        self.audio_checkbox = ctk.CTkCheckBox(self.upload_settings_frame, text="Keep Audio")
+        self.audio_checkbox.grid(row=upload_row, column=0, columnspan=2, sticky="w", padx=10, pady=(5, 10))
 
     def _create_generate_button(self):
         """Create the main generate button."""
 
         self.generate_btn = ctk.CTkButton(
             self.main_frame,
-            text="Generate GIFs",
+            text=self._default_generate_button_text(),
             font=ctk.CTkFont(size=16, weight="bold"),
             height=50,
-            corner_radius=10,
+            corner_radius=12,
             command=self.generate_gifs,
-            fg_color=("#1E88E5", "#1565C0"),
-            hover_color=("#1976D2", "#0D47A1")
+            fg_color=self.COLORS["primary_btn"],
+            hover_color=self.COLORS["primary_btn_hover"],
         )
-        self.generate_btn.grid(row=6, column=0, sticky="ew", pady=(10, 20))
+        self.generate_btn.grid(row=8, column=0, sticky="ew", pady=(8, 10))
 
     def _create_progress_section(self):
         """Create the progress bar and status display."""
 
-        self.progress_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.progress_frame.grid(row=7, column=0, sticky="ew", pady=(0, 10))
+        self.progress_frame = ctk.CTkFrame(
+            self.main_frame,
+            corner_radius=12,
+            border_width=1,
+            border_color=self.COLORS["card_border"],
+            fg_color=self.COLORS["card_bg"],
+        )
+        self.progress_frame.grid(row=9, column=0, sticky="ew", pady=(0, 10))
         self.progress_frame.grid_columnconfigure(0, weight=1)
 
-        # Bulk progress label (hidden by default, shown in bulk mode during processing)
         self.bulk_progress_label = ctk.CTkLabel(
             self.progress_frame,
             text="",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#333333", "#FFFFFF"),
-            anchor="w"
+            text_color=self.COLORS["muted"],
+            anchor="w",
         )
-        self.bulk_progress_label.grid(row=0, column=0, sticky="w", pady=(0, 5))
-        self.bulk_progress_label.grid_remove()  # Hidden by default
+        self.bulk_progress_label.grid(row=0, column=0, sticky="w", padx=12, pady=(10, 4))
+        self.bulk_progress_label.grid_remove()
 
-        # Progress bar
         self.progress_bar = ctk.CTkProgressBar(
             self.progress_frame,
             height=12,
-            corner_radius=6
+            corner_radius=8,
+            progress_color=self.COLORS["accent"],
         )
-        self.progress_bar.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        self.progress_bar.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 8))
         self.progress_bar.set(0)
 
-        # Status label
         self.status_label = ctk.CTkLabel(
             self.progress_frame,
-            text="Status: Ready",
+            text="Status: Ready. Choose an input source to begin.",
             font=ctk.CTkFont(size=12),
-            text_color=("#333333", "#CBD5E1"),
-            anchor="w"
+            text_color=self.COLORS["muted"],
+            anchor="w",
         )
-        self.status_label.grid(row=2, column=0, sticky="w")
+        self.status_label.grid(row=2, column=0, sticky="w", padx=12, pady=(0, 10))
 
-        # ===== BOTTOM SCALE BAR =====
         self._create_scale_bar()
+
+        # Apply saved font size on startup
+        saved_font = self._load_font_size()
+        if saved_font != 16:  # only apply if non-default
+            self.after(500, lambda: self._apply_font_size(saved_font))
+
+    def _default_generate_button_text(self):
+        """Return the correct primary action label for current output mode."""
+        return "Generate Clips" if self.format_segmented.get() == "Video Clips" else "Generate GIFs"
 
     def _create_scale_bar(self):
         """Create a bottom bar with UI scale and theme toggle."""
-        self.scale_bar = ctk.CTkFrame(self, height=32, fg_color=("#E8E8E8", "#111827"))
+        self.scale_bar = ctk.CTkFrame(self, height=34, fg_color=self.COLORS["card_bg"])
         self.scale_bar.grid(row=1, column=0, sticky="ew")
         self.scale_bar.grid_columnconfigure(0, weight=1)
 
@@ -790,7 +943,7 @@ class GifMakeApp(ctk.CTk):
 
         ctk.CTkLabel(
             scale_frame, text="UI Scale:",
-            font=ctk.CTkFont(size=11), text_color=("#333", "#94A3B8")
+            font=ctk.CTkFont(size=11), text_color=self.COLORS["muted"]
         ).pack(side="left", padx=(0, 5))
 
         # Find current scale label
@@ -811,6 +964,30 @@ class GifMakeApp(ctk.CTk):
         )
         self.scale_dropdown.set(current_label)
         self.scale_dropdown.pack(side="left")
+
+        # Font size control
+        ctk.CTkLabel(
+            scale_frame, text="    Font:",
+            font=ctk.CTkFont(size=11), text_color=self.COLORS["muted"]
+        ).pack(side="left", padx=(10, 5))
+
+        current_font_size = self._load_font_size()
+        current_font_label = "Large (16)"
+        for label, val in self.FONT_SIZE_OPTIONS.items():
+            if val == current_font_size:
+                current_font_label = label
+                break
+
+        self.font_dropdown = ctk.CTkOptionMenu(
+            scale_frame,
+            values=list(self.FONT_SIZE_OPTIONS.keys()),
+            width=110,
+            height=24,
+            font=ctk.CTkFont(size=11),
+            command=self._on_font_size_change,
+        )
+        self.font_dropdown.set(current_font_label)
+        self.font_dropdown.pack(side="left")
 
     def _on_theme_toggle(self):
         """Switch between light and dark mode."""
@@ -875,6 +1052,68 @@ class GifMakeApp(ctk.CTk):
         except Exception as e:
             print(f"Could not save UI scale: {e}")
 
+    def _on_font_size_change(self, value):
+        """Apply new font size globally and save."""
+        size = self.FONT_SIZE_OPTIONS.get(value, 16)
+        self._apply_font_size(size)
+        self._save_font_size(size)
+
+    def _load_font_size(self):
+        """Load saved font size, default 16."""
+        try:
+            if os.path.exists(self.UI_SETTINGS_PATH):
+                with open(self.UI_SETTINGS_PATH, encoding="utf-8") as f:
+                    data = json.load(f)
+                return int(data.get("font_size", 16))
+        except Exception:
+            pass
+        return 16
+
+    def _save_font_size(self, size):
+        """Persist font size to config/ui_settings.json."""
+        try:
+            data = {}
+            if os.path.exists(self.UI_SETTINGS_PATH):
+                with open(self.UI_SETTINGS_PATH, encoding="utf-8") as f:
+                    data = json.load(f)
+            data["font_size"] = size
+            os.makedirs(os.path.dirname(self.UI_SETTINGS_PATH), exist_ok=True)
+            with open(self.UI_SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
+
+    def _apply_font_size(self, size):
+        """Recursively update font size on all widgets in the app."""
+        bold_size = size + 1
+        header_size = size + 3
+
+        def _update_widget(widget):
+            try:
+                current_font = widget.cget("font")
+                if current_font:
+                    if isinstance(current_font, ctk.CTkFont):
+                        is_bold = "bold" in (current_font.cget("weight") or "")
+                        new_size = header_size if is_bold and current_font.cget("size") > size else (bold_size if is_bold else size)
+                        current_font.configure(size=new_size)
+                    elif isinstance(current_font, tuple):
+                        family = current_font[0] if len(current_font) > 0 else "Segoe UI"
+                        weight = current_font[2] if len(current_font) > 2 else ""
+                        is_bold = weight == "bold"
+                        new_size = bold_size if is_bold else size
+                        widget.configure(font=(family, new_size, weight) if weight else (family, new_size))
+            except Exception:
+                pass
+
+            # Recurse into children
+            try:
+                for child in widget.winfo_children():
+                    _update_widget(child)
+            except Exception:
+                pass
+
+        _update_widget(self)
+
     # ===== EVENT HANDLERS =====
 
     def on_mode_change(self, value):
@@ -890,20 +1129,26 @@ class GifMakeApp(ctk.CTk):
 
         # Update drop zone text based on mode
         if self.bulk_mode:
-            self.drop_icon.configure(text="[FOLDER]", text_color=("#3B8ED0", "#5DADE2"))
-            self.drop_label.configure(text="Click to Select Video Folder")
-            self.drop_sublabel.configure(text="or Drop Folder Here")
-            self.selected_label.configure(text="Selected: No folder selected")
+            self.drop_icon.configure(text="FOLDER", text_color=self.COLORS["primary_btn"])
+            self.drop_label.configure(text="Click To Select A Folder")
+            self.drop_sublabel.configure(
+                text="Every supported video in that folder will be processed automatically."
+            )
+            self.select_source_btn.configure(text="Choose Folder")
+            self.selected_label.configure(text="Selected source: none")
             self.video_list_container.grid()  # Show video list
         else:
-            self.drop_icon.configure(text="[VIDEO]", text_color=("#3B8ED0", "#5DADE2"))
-            self.drop_label.configure(text="Drag & Drop Video Here")
-            self.drop_sublabel.configure(text="or Click to Browse")
-            self.selected_label.configure(text="Selected: No video selected")
+            self.drop_icon.configure(text="VIDEO", text_color=self.COLORS["primary_btn"])
+            self.drop_label.configure(text="Click To Select A Video")
+            self.drop_sublabel.configure(
+                text="Switch to Bulk Folder mode above if you want to process multiple files at once."
+            )
+            self.select_source_btn.configure(text="Choose Video")
+            self.selected_label.configure(text="Selected source: none")
             self.video_list_container.grid_remove()  # Hide video list
 
         # Reset other displays
-        self.duration_label.configure(text="Duration: --:-- | Estimated GIFs: --")
+        self.duration_label.configure(text="Duration: --:-- | Estimated outputs: --")
         self._clear_video_list()
 
         # Clear output folder if it was auto-set
@@ -935,12 +1180,14 @@ class GifMakeApp(ctk.CTk):
 
             # Truncate filename if too long
             display_name = filename if len(filename) <= 40 else filename[:37] + "..."
-            self.selected_label.configure(text=f"Selected: {display_name}")
+            self.selected_label.configure(text=f"Selected source: {display_name}")
 
             # Update drop zone appearance
             self.drop_label.configure(text=filename if len(filename) <= 30 else filename[:27] + "...")
-            self.drop_sublabel.configure(text="Click to change")
-            self.drop_icon.configure(text="[OK]", text_color=("#28A745", "#5CB85C"))
+            self.drop_sublabel.configure(text="Source ready. Click again to replace this file.")
+            self.drop_icon.configure(text="READY", text_color=self.COLORS["status_ok"])
+            self.select_source_btn.configure(text="Change Video")
+            self.status_label.configure(text="Status: Source selected. Review settings, then generate.")
 
             # Get video duration
             self._get_video_duration()
@@ -991,12 +1238,13 @@ class GifMakeApp(ctk.CTk):
 
         # Update drop zone
         folder_name = os.path.basename(folder_path)
-        self.drop_icon.configure(text="[OK]", text_color=("#28A745", "#5CB85C"))
+        self.drop_icon.configure(text="READY", text_color=self.COLORS["status_ok"])
         self.drop_label.configure(text=folder_name if len(folder_name) <= 30 else folder_name[:27] + "...")
-        self.drop_sublabel.configure(text="Click to change folder")
+        self.drop_sublabel.configure(text="Folder selected. Scanning durations and file count now.")
+        self.select_source_btn.configure(text="Change Folder")
 
         # Update selected label
-        self.selected_label.configure(text=f"Selected: {folder_path}")
+        self.selected_label.configure(text=f"Selected source: {folder_path}")
 
         # Set default output folder
         if not self.output_entry.get():
@@ -1004,7 +1252,7 @@ class GifMakeApp(ctk.CTk):
             self.output_entry.insert(0, folder_path)
 
         # Get durations for all videos (in background thread to avoid UI freeze)
-        self.status_label.configure(text="Status: Scanning videos...")
+        self.status_label.configure(text="Status: Scanning selected folder...")
         thread = threading.Thread(target=self._scan_video_durations_worker, daemon=True)
         thread.start()
 
@@ -1051,7 +1299,7 @@ class GifMakeApp(ctk.CTk):
     def _update_bulk_ui(self):
         """Update UI after scanning videos (called on main thread)."""
         # Update video count label
-        self.video_count_label.configure(text=f"({len(self.video_paths)} videos)")
+        self.video_count_label.configure(text=f"{len(self.video_paths)} files")
 
         # Format total duration
         total_minutes = int(self.total_duration // 60)
@@ -1065,13 +1313,13 @@ class GifMakeApp(ctk.CTk):
         )
 
         self.duration_label.configure(
-            text=f"Found: {len(self.video_paths)} videos | Total Duration: {duration_str} | Estimated GIFs: {total_estimated_gifs}"
+            text=f"Duration: {duration_str} total | Estimated outputs: {total_estimated_gifs}"
         )
 
         # Populate video list
         self._populate_video_list()
 
-        self.status_label.configure(text="Status: Ready")
+        self.status_label.configure(text="Status: Folder scan complete. Ready to generate.")
 
     def _clear_video_list(self):
         """Clear all items from the video list."""
@@ -1101,7 +1349,7 @@ class GifMakeApp(ctk.CTk):
             # Create item frame
             item_frame = ctk.CTkFrame(
                 self.video_list_scroll,
-                fg_color=("#FFFFFF", "#243040") if i % 2 == 0 else ("#F0F0F0", "#1A2535"),
+                fg_color=("#F8FAFF", "#1B283A") if i % 2 == 0 else ("#EDF3FD", "#162234"),
                 corner_radius=5,
                 height=35
             )
@@ -1114,7 +1362,7 @@ class GifMakeApp(ctk.CTk):
                 item_frame,
                 text=filename if len(filename) <= 35 else filename[:32] + "...",
                 font=ctk.CTkFont(size=11),
-                text_color=("#333333", "#FFFFFF"),
+                text_color=self.COLORS["text"],
                 anchor="w"
             )
             filename_label.grid(row=0, column=0, sticky="w", padx=(10, 5), pady=5)
@@ -1124,7 +1372,7 @@ class GifMakeApp(ctk.CTk):
                 item_frame,
                 text=duration_str,
                 font=ctk.CTkFont(size=11),
-                text_color=("#333333", "#CBD5E1"),
+                text_color=self.COLORS["muted"],
                 width=50
             )
             dur_label.grid(row=0, column=1, sticky="e", padx=5, pady=5)
@@ -1132,9 +1380,9 @@ class GifMakeApp(ctk.CTk):
             # Estimated GIFs label
             gifs_label = ctk.CTkLabel(
                 item_frame,
-                text=f"~{estimated_gifs} GIFs",
+                text=f"~{estimated_gifs} outputs",
                 font=ctk.CTkFont(size=11),
-                text_color=("#1E88E5", "#5DADE2"),
+                text_color=self.COLORS["primary_btn"],
                 width=60
             )
             gifs_label.grid(row=0, column=2, sticky="e", padx=(5, 10), pady=5)
@@ -1167,10 +1415,10 @@ class GifMakeApp(ctk.CTk):
                 self.video_duration = float(result.stdout.strip())
                 self._update_duration_display()
             except Exception as e:
-                self.duration_label.configure(text=f"Duration: Unable to read | Estimated GIFs: --")
+                self.duration_label.configure(text="Duration: unavailable | Estimated outputs: --")
                 self.video_duration = 0
         except Exception as e:
-            self.duration_label.configure(text=f"Duration: Unable to read | Estimated GIFs: --")
+            self.duration_label.configure(text="Duration: unavailable | Estimated outputs: --")
             self.video_duration = 0
 
     def _update_duration_display(self):
@@ -1187,7 +1435,7 @@ class GifMakeApp(ctk.CTk):
                 duration_str = f"{total_minutes}:{total_seconds:02d}"
 
                 self.duration_label.configure(
-                    text=f"Found: {len(self.video_paths)} videos | Total Duration: {duration_str} | Estimated GIFs: {total_estimated_gifs}"
+                    text=f"Duration: {duration_str} total | Estimated outputs: {total_estimated_gifs}"
                 )
 
                 # Also update video list with new estimates
@@ -1203,7 +1451,7 @@ class GifMakeApp(ctk.CTk):
                 estimated_gifs = int(self.video_duration // gif_duration)
 
                 self.duration_label.configure(
-                    text=f"Duration: {duration_str} | Estimated GIFs: {estimated_gifs}"
+                    text=f"Duration: {duration_str} | Estimated outputs: {estimated_gifs}"
                 )
 
     def select_output_folder(self):
@@ -1233,19 +1481,19 @@ class GifMakeApp(ctk.CTk):
     def on_format_change(self, value):
         """Handle output format change between GIF and Video Clips."""
         if value == "Video Clips":
-            self.generate_btn.configure(text="Generate Clips")
+            self.generate_btn.configure(text=self._default_generate_button_text())
             self.duration_setting_label.configure(text="Clip Duration:")
             self.preserve_quality_checkbox.grid()
-            # Default to lossless for clips — no downscaling
+            # Default to lossless for clips to avoid unnecessary quality drops.
             self.preserve_quality_checkbox.select()
             self.resolution_dropdown.set("Original")
             self.fps_dropdown.set("60")
         else:
-            self.generate_btn.configure(text="Generate GIFs")
+            self.generate_btn.configure(text=self._default_generate_button_text())
             self.duration_setting_label.configure(text="GIF Duration:")
             self.preserve_quality_checkbox.grid_remove()
             self.preserve_quality_checkbox.deselect()
-            # GIFs need lower settings to keep file size manageable
+            # GIF defaults stay conservative to keep output file size manageable.
             self.resolution_dropdown.set("480p")
             self.fps_dropdown.set("15")
 
@@ -1425,7 +1673,7 @@ class GifMakeApp(ctk.CTk):
         self.is_processing = True
         self.generate_btn.configure(state="disabled", text="Processing...")
         self.progress_bar.set(0)
-        self.status_label.configure(text="Status: Starting...")
+        self.status_label.configure(text="Status: Preparing conversion...")
 
         # Get settings
         gif_duration = int(self.duration_slider.get())
@@ -1566,7 +1814,7 @@ class GifMakeApp(ctk.CTk):
         count = len(gif_paths) if gif_paths else 0
         format_name = "clips" if output_format == "mp4" else "GIFs"
         format_singular = "Clip" if output_format == "mp4" else "GIF"
-        btn_text = "Generate Clips" if output_format == "mp4" else "Generate GIFs"
+        btn_text = self._default_generate_button_text()
 
         # Add to Reddit campaign if checked
         self._maybe_add_campaign(output_folder)
@@ -1583,7 +1831,7 @@ class GifMakeApp(ctk.CTk):
         else:
             self.is_processing = False
             self.generate_btn.configure(state="normal", text=btn_text)
-            self.status_label.configure(text=f"Status: Complete! Generated {count} {format_name}")
+            self.status_label.configure(text=f"Status: Complete. Generated {count} {format_name}.")
 
             # Show completion dialog
             result = messagebox.askquestion(
@@ -1602,7 +1850,7 @@ class GifMakeApp(ctk.CTk):
 
         count = len(gif_paths) if gif_paths else 0
         format_name = "clips" if output_format == "mp4" else "GIFs"
-        btn_text = "Generate Clips" if output_format == "mp4" else "Generate GIFs"
+        btn_text = self._default_generate_button_text()
 
         # Add to Reddit campaign if checked
         self._maybe_add_campaign(output_folder)
@@ -1619,7 +1867,9 @@ class GifMakeApp(ctk.CTk):
         else:
             self.is_processing = False
             self.generate_btn.configure(state="normal", text=btn_text)
-            self.status_label.configure(text=f"Status: Complete! Generated {count} {format_name} from {total_videos} videos")
+            self.status_label.configure(
+                text=f"Status: Complete. Generated {count} {format_name} from {total_videos} videos."
+            )
 
             # Show completion dialog
             result = messagebox.askquestion(
@@ -1634,9 +1884,9 @@ class GifMakeApp(ctk.CTk):
     def _on_error(self, error_msg):
         """Handle errors during GIF generation (called on main thread)."""
         self.is_processing = False
-        self.generate_btn.configure(state="normal", text="Generate GIFs")
+        self.generate_btn.configure(state="normal", text=self._default_generate_button_text())
         self.progress_bar.set(0)
-        self.status_label.configure(text="Status: Error occurred")
+        self.status_label.configure(text="Status: Conversion failed.")
         self.bulk_progress_label.grid_remove()
 
         messagebox.showerror("Error", f"An error occurred during processing:\n\n{error_msg}")
@@ -1676,7 +1926,7 @@ class GifMakeApp(ctk.CTk):
     def _on_upload_complete(self, results, output_folder):
         """Handle upload completion (called on main thread)."""
         self.is_processing = False
-        self.generate_btn.configure(state="normal", text="Generate GIFs")
+        self.generate_btn.configure(state="normal", text=self._default_generate_button_text())
 
         success_count = sum(1 for r in results if r["success"])
         failed_count = len(results) - success_count
@@ -1702,8 +1952,8 @@ class GifMakeApp(ctk.CTk):
     def _on_upload_error(self, error_msg, output_folder):
         """Handle upload errors (called on main thread)."""
         self.is_processing = False
-        self.generate_btn.configure(state="normal", text="Generate GIFs")
-        self.status_label.configure(text="Status: Upload error")
+        self.generate_btn.configure(state="normal", text=self._default_generate_button_text())
+        self.status_label.configure(text="Status: Upload failed")
 
         result = messagebox.askquestion(
             "Upload Error",
@@ -1748,7 +1998,7 @@ class GifMakeApp(ctk.CTk):
                 output_folder, preferred_profile_id=profile_id
             )
             if added:
-                self.tabview.set("Reddit")
+                self.tabview.set(self.REDDIT_TAB_NAME)
         except Exception as e:
             print(f"[campaign bridge] Could not add campaign: {e}")
 
@@ -1773,3 +2023,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
