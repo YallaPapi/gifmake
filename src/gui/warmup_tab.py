@@ -10,6 +10,7 @@ import os
 import json
 import sys
 import logging
+import logging.handlers
 import time
 import random
 import requests
@@ -31,6 +32,17 @@ from processors.account_profile import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Rotating file log — survives crashes, caps at 5MB x 3 files
+_LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+_file_handler = logging.handlers.RotatingFileHandler(
+    os.path.join(_LOG_DIR, "warmup.log"),
+    maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+_file_handler.setFormatter(logging.Formatter(
+    "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+logging.getLogger("core.account_warmer").addHandler(_file_handler)
+logger.addHandler(_file_handler)
 
 
 def _auto_wrap(label):
@@ -1613,12 +1625,20 @@ class WarmupTab:
         # Auto-refresh stats for the new account
         self._refresh_stats(silent=True)
 
+    _LOG_MAX_LINES = 3000
+
     def _log(self, msg):
+        # Write to file log first (survives crashes)
+        logger.info(msg)
         tag = _detect_log_tag(msg)
         if tag:
             self.log_box.insert("end", f"{msg}\n", tag)
         else:
             self.log_box.insert("end", f"{msg}\n")
+        # Trim to prevent RAM bloat during multi-day runs
+        line_count = int(self.log_box.index("end-1c").split(".")[0])
+        if line_count > self._LOG_MAX_LINES:
+            self.log_box.delete("1.0", f"{line_count - self._LOG_MAX_LINES}.0")
         self.log_box.see("end")
 
     def _refresh_stats(self, silent=False):
