@@ -224,6 +224,80 @@ def scrape_karma(usernames, proxy=None):
     return results
 
 
+def _extract_karma_from_results(all_results, usernames):
+    """Extract karma from browser-captured profile data in warmup results.
+
+    Each result's stats may contain a 'karma' dict from _capture_profile_karma().
+    Falls back to status-based classification if no karma data captured.
+    """
+    karma_data = {}
+
+    # Build a lookup: username -> result
+    result_by_user = {}
+    for r in all_results:
+        username = r.get("profile", "")
+        if username:
+            result_by_user[username] = r
+
+    for username in usernames:
+        r = result_by_user.get(username, {})
+        status = r.get("status", "unknown")
+
+        # Check for browser-captured karma
+        stats = r.get("stats", {})
+        karma = stats.get("karma", {})
+
+        if karma:
+            total_str = karma.get("total_karma", "0")
+            comment_str = karma.get("comment_karma", "0")
+            post_str = karma.get("post_karma", "0")
+            try:
+                total_k = int(total_str)
+            except (ValueError, TypeError):
+                total_k = 0
+            try:
+                comment_k = int(comment_str)
+            except (ValueError, TypeError):
+                comment_k = 0
+            try:
+                post_k = int(post_str)
+            except (ValueError, TypeError):
+                post_k = 0
+
+            acct_status = "healthy"
+            if status == "banned":
+                acct_status = "suspended"
+            elif status == "shadowbanned":
+                acct_status = "shadowbanned"
+
+            karma_data[username] = {
+                "comment_karma": comment_k,
+                "link_karma": post_k,
+                "total_karma": total_k if total_k else comment_k + post_k,
+                "status": acct_status,
+            }
+        else:
+            # No browser karma data — use status from the warmup result
+            acct_status = "healthy"
+            if status == "banned":
+                acct_status = "suspended"
+            elif status == "shadowbanned":
+                acct_status = "shadowbanned"
+            elif status in ("browser_crashed", "not_logged_in", "failed"):
+                acct_status = "error"
+
+            karma_data[username] = {
+                "comment_karma": 0,
+                "link_karma": 0,
+                "total_karma": 0,
+                "status": acct_status,
+            }
+
+    logger.info(f"Extracted karma for {len(karma_data)}/{len(usernames)} accounts "
+                f"({sum(1 for v in karma_data.values() if v['total_karma'] > 0)} with karma data)")
+    return karma_data
+
+
 # ---- Database operations ----
 
 def save_karma_snapshots(karma_data, comment_counts, date_str):
@@ -917,14 +991,8 @@ def run_karma_report(all_results, ban_log):
     usernames = sorted(usernames)
     logger.info(f"Collected {len(usernames)} unique usernames")
 
-    # Step 2: Load proxy and scrape karma
-    proxy = load_proxy()
-    if proxy:
-        logger.info("Using proxy for karma scraping")
-    else:
-        logger.warning("No proxy configured, scraping without proxy")
-
-    karma_data = scrape_karma(usernames, proxy=proxy)
+    # Step 2: Extract karma from browser-captured profile data (no API scrape)
+    karma_data = _extract_karma_from_results(all_results, usernames)
 
     # Override status for accounts known to be banned from ban_log
     for adspower_id, ban_info in ban_log.items():

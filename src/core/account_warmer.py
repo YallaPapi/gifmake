@@ -387,7 +387,8 @@ class AccountWarmer:
 
     def __init__(self, profile_id, page, persona=None, attributes=None,
                  grok_api_key=None,
-                 account_age_days=None, account_created_at=None):
+                 account_age_days=None, account_created_at=None,
+                 username=None):
         """
         Args:
             profile_id: AdsPower profile ID
@@ -397,9 +398,11 @@ class AccountWarmer:
             grok_api_key: xAI API key for contextual comment generation
             account_age_days: Optional reddit account age (days since creation)
             account_created_at: Optional ISO datetime for reddit account creation
+            username: Reddit username for this account
         """
         self.profile_id = profile_id
         self.page = page
+        self.username = username or "unknown"
 
         # Auto-hide CupidBotOFM.ai browser plugin on every page load
         try:
@@ -609,7 +612,62 @@ class AccountWarmer:
         except Exception as e:
             logger.debug(f"  Screenshot capture failed: {e}")
 
-    # â"€â"€ Main entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    def _capture_profile_karma(self):
+        """Navigate to the account's profile page, extract karma, and screenshot.
+
+        Saves screenshot to data/profile_screenshots/<date>/<username>.png
+        Returns dict with karma values or empty dict on failure.
+        """
+        import datetime
+        result = {}
+        try:
+            self.page.goto(f"https://www.reddit.com/user/{self.username}",
+                           timeout=15000, wait_until="domcontentloaded")
+            self._wait_for_timeout(random.randint(2000, 4000))
+
+            # Extract karma from the profile page DOM
+            karma_data = self.page.evaluate("""() => {
+                const result = {};
+                // Try the profile sidebar karma display
+                const karmaEls = document.querySelectorAll('[id*="karma"], [data-testid*="karma"]');
+                for (const el of karmaEls) {
+                    const text = el.textContent.trim();
+                    if (text) result['karma_element'] = text;
+                }
+                // Try to find specific karma values from the about/profile section
+                const allText = document.body.innerText;
+                // Look for "X karma" pattern
+                const karmaMatch = allText.match(/(\\d[\\d,]*)\\s*karma/i);
+                if (karmaMatch) result['total_karma'] = karmaMatch[1].replace(',', '');
+                // Comment karma
+                const commentMatch = allText.match(/(\\d[\\d,]*)\\s*comment\\s*karma/i);
+                if (commentMatch) result['comment_karma'] = commentMatch[1].replace(',', '');
+                // Post karma
+                const postMatch = allText.match(/(\\d[\\d,]*)\\s*post\\s*karma/i);
+                if (postMatch) result['post_karma'] = postMatch[1].replace(',', '');
+                // Cake day / account age
+                const cakeMatch = allText.match(/cake\\s*day[:\\s]*(\\w+\\s+\\d+,?\\s*\\d*)/i);
+                if (cakeMatch) result['cake_day'] = cakeMatch[1];
+                return result;
+            }""")
+            result = karma_data or {}
+            logger.info(f"Profile karma for {self.username}: {result}")
+
+            # Screenshot the profile page
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            date_dir = datetime.datetime.now().strftime("%Y-%m-%d")
+            base = os.path.join("data", "profile_screenshots", date_dir)
+            os.makedirs(base, exist_ok=True)
+            filepath = os.path.join(base, f"{self.username}_{ts}.png")
+            self.page.screenshot(path=filepath, timeout=5000)
+            logger.info(f"Profile screenshot: {filepath}")
+
+        except Exception as e:
+            logger.info(f"Profile karma capture failed for {self.username}: {e}")
+
+        return result
+
+    # â"€â"€ Main entry point â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     def run_daily_warmup(self, target_subs=None, session_minutes=None,
                          max_comments=None):
@@ -685,6 +743,11 @@ class AccountWarmer:
         record_activity(self.profile_id, "upvotes", self.stats["upvotes"])
         record_activity(self.profile_id, "comments", self.stats["comments"])
         record_activity(self.profile_id, "joins", self.stats["joins"])
+
+        # Capture profile karma + screenshot before closing
+        karma_data = self._capture_profile_karma()
+        if karma_data:
+            self.stats["karma"] = karma_data
 
         logger.info(f"Warmup done: {self.stats}")
         self.stats["action_log"] = list(self.action_log)

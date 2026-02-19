@@ -357,6 +357,7 @@ def warmup_one(account, ban_log, rotation_urls):
                 grok_api_key=GROK_KEY,
                 account_age_days=age_days,
                 account_created_at=created_at,
+                username=profile_key,
             )
 
             day = warmer.get_day()
