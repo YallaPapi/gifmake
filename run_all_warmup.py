@@ -204,17 +204,27 @@ def load_profile_data(username):
 
 
 def rotate_proxy(group, rotation_urls):
-    """Hit the proxy rotation URL to get a fresh IP for this group."""
+    """Hit the proxy rotation URL to get a fresh IP for this group.
+
+    Retries up to 3 times on failure. This is critical — without rotation,
+    consecutive accounts share the same IP and get linked together.
+    """
     url = rotation_urls.get(group, "")
     if not url:
         return
     log = logging.getLogger(f"proxy:{group}")
-    try:
-        resp = requests.get(url, timeout=15)
-        log.info(f"Rotated proxy IP (status {resp.status_code})")
-        time.sleep(5)  # Wait for new IP to propagate
-    except Exception as e:
-        log.warning(f"Proxy rotation failed: {e}")
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, timeout=15)
+            if resp.status_code == 200:
+                log.info(f"Rotated proxy IP (status {resp.status_code})")
+                time.sleep(5)  # Wait for new IP to propagate
+                return
+            log.warning(f"Rotation returned {resp.status_code}, retry {attempt+1}/3")
+        except Exception as e:
+            log.warning(f"Proxy rotation attempt {attempt+1}/3 failed: {e}")
+        time.sleep(3)
+    log.error(f"PROXY ROTATION FAILED after 3 attempts for group {group}")
 
 
 # -- Single account warmup --
@@ -389,6 +399,7 @@ def warmup_one(account, ban_log, rotation_urls):
         return {"profile": profile_key, "status": "error",
                 "adspower_id": adspower_id, "proxy_group": grp, "error": str(e)}
     finally:
+        # 1. Close the browser FIRST
         try:
             requests.get(
                 f"{ADSPOWER_API}/api/v1/browser/stop?user_id={adspower_id}&api_key={API_KEY}",
@@ -398,6 +409,10 @@ def warmup_one(account, ban_log, rotation_urls):
         except Exception as e:
             log.warning(f"Failed to stop browser: {e}")
 
+        # 2. Rotate proxy IP AFTER browser is closed — guaranteed every time
+        time.sleep(2)  # Let browser fully die
+        rotate_proxy(grp, rotation_urls)
+
 
 # -- Per-group sequential runner --
 
@@ -406,6 +421,11 @@ def run_group(group, accounts, ban_log, rotation_urls):
 
     This is the key safety guarantee: only 1 account per proxy is active at a time.
     Between accounts, the proxy IP is rotated.
+
+    Rotation order (guaranteed in warmup_one's finally block):
+      1. Close browser (AdsPower stop API)
+      2. Rotate proxy IP (hit rotation URL)
+      3. Next account opens browser on fresh IP
     """
     log = logging.getLogger(f"group:{group}")
     results = []
@@ -419,10 +439,6 @@ def run_group(group, accounts, ban_log, rotation_urls):
     log.info(f"Starting {group}: {len(active)} accounts ({len(accounts) - len(active)} permabanned)")
 
     for i, acc in enumerate(active):
-        # Rotate proxy IP before each account (except the first)
-        if i > 0:
-            rotate_proxy(group, rotation_urls)
-
         result = warmup_one(acc, ban_log, rotation_urls)
         results.append(result)
 
