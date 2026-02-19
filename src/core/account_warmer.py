@@ -898,7 +898,11 @@ class AccountWarmer:
             ]
         random.shuffle(feed_candidates)
 
+        _PROXY_DEAD_TOKENS = ("tunnel", "socks", "proxy", "err_proxy",
+                               "net::err_connection", "net::err_timed_out")
+
         feed_url = None
+        proxy_dead = False
         for candidate in feed_candidates:
             try:
                 self.page.goto(candidate, timeout=30000,
@@ -911,12 +915,21 @@ class AccountWarmer:
                     break
                 logger.info(f"Feed {candidate}: only {post_count} posts, trying next")
             except Exception as e:
+                err_lower = str(e).lower()
                 logger.info(f"Feed {candidate} failed: {e}")
                 self._screenshot_error("feed_load_failed", f"{candidate}: {e}"[:150])
+                # Abort immediately on proxy/tunnel death — retrying is pointless
+                if any(tok in err_lower for tok in _PROXY_DEAD_TOKENS):
+                    logger.warning(f"PROXY DEAD — aborting session immediately: {e}")
+                    proxy_dead = True
+                    break
 
         if not feed_url:
-            logger.warning("No feed URL produced posts, aborting session")
-            self._screenshot_error("no_feed_loaded", "all feed candidates failed")
+            if proxy_dead:
+                logger.warning("Proxy tunnel is dead, session cannot start")
+            else:
+                logger.warning("No feed URL produced posts, aborting session")
+                self._screenshot_error("no_feed_loaded", "all feed candidates failed")
             return
 
         self._feed_url = feed_url  # Store for recovery in _explore_post
@@ -1036,8 +1049,13 @@ class AccountWarmer:
                     self._wait_for_timeout(random.randint(1000, 2500))
 
             except Exception as e:
+                err_lower = str(e).lower()
                 logger.info(f"Scroll loop error: {e}")
                 self._screenshot_error("scroll_loop_exception", str(e)[:150])
+                # Proxy/tunnel dead — abort immediately, no recovery possible
+                if any(tok in err_lower for tok in _PROXY_DEAD_TOKENS):
+                    logger.warning(f"PROXY DEAD mid-session — aborting: {e}")
+                    break
                 # Try to recover by going back to feed
                 try:
                     self.page.goto(feed_url, timeout=15000,

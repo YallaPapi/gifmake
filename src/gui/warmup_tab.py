@@ -2350,8 +2350,39 @@ class WarmupTab:
 
         self.app.after(0, self._on_run_all_complete)
 
+    def _close_all_browsers(self):
+        """Kill every open AdsPower browser. Prevents orphans from piling up."""
+        api_base = self.adspower_config.get(
+            "adspower_api_base", "http://localhost:50325")
+        api_key = self.adspower_config.get("api_key", "")
+        try:
+            resp = requests.get(
+                f"{api_base}/api/v1/browser/local-active",
+                params={"api_key": api_key}, timeout=10)
+            active = resp.json().get("data", {}).get("list", [])
+        except Exception:
+            return 0
+        closed = 0
+        for b in active:
+            uid = b.get("user_id", "")
+            try:
+                requests.get(
+                    f"{api_base}/api/v1/browser/stop",
+                    params={"user_id": uid, "api_key": api_key}, timeout=10)
+                closed += 1
+            except Exception:
+                pass
+        return closed
+
     def _run_one_cycle(self, accounts_by_group, grok_key, active_ids):
         """Run one full pass through all proxy groups. Returns True if any account ran."""
+        # Kill any orphaned browsers from previous crashes/cycles
+        closed = self._close_all_browsers()
+        if closed:
+            self.app.after(0, self._log,
+                           f"Cleaned up {closed} orphaned browser(s) before starting cycle")
+            time.sleep(3)
+
         # Day boundary check — reset caps at midnight
         current_date = datetime.now().strftime("%Y-%m-%d")
         if self._last_cycle_date != current_date:
