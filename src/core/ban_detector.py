@@ -185,6 +185,30 @@ def check_account_health(page):
                 username = parts[1].strip("/").split("/")[0].split("?")[0]
 
         if username:
+            # Double-check: visit the profile page and look for suspension banner
+            # Reddit shows suspension on the public profile, not on /user/me
+            try:
+                page.goto(f"https://www.reddit.com/user/{username}",
+                          timeout=15000, wait_until="domcontentloaded")
+                page.wait_for_timeout(2000)
+                profile_text = page.inner_text("body").lower()
+                for pattern in ACCOUNT_SUSPENDED_PATTERNS:
+                    if pattern in profile_text:
+                        _dump_page(page, f"suspended_{username}")
+                        return BanStatus.ACCOUNT_SUSPENDED, f"{username}: {pattern}"
+                # Also check for the generic "This account has been suspended" h3
+                if "this account has been suspended" in profile_text:
+                    _dump_page(page, f"suspended_{username}")
+                    return BanStatus.ACCOUNT_SUSPENDED, f"{username}: suspended page detected"
+                # Check if profile content is missing (another suspension signal)
+                has_content = page.locator('shreddit-post, [data-testid="post-container"]').count() > 0
+                has_karma = "karma" in profile_text
+                if not has_content and not has_karma and "sorry" in profile_text:
+                    _dump_page(page, f"suspended_{username}")
+                    return BanStatus.ACCOUNT_SUSPENDED, f"{username}: empty profile with sorry text"
+            except Exception as e:
+                logger.debug(f"Profile check failed for {username}: {e}")
+
             return BanStatus.OK, username
 
         return BanStatus.OK, "logged in"
