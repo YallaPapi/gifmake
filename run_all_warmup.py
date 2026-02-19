@@ -410,7 +410,7 @@ def warmup_one(account, ban_log, rotation_urls):
             log.warning(f"Failed to stop browser: {e}")
 
         # 2. Rotate proxy IP AFTER browser is closed — guaranteed every time
-        time.sleep(2)  # Let browser fully die
+        time.sleep(10)  # Let browser fully die
         rotate_proxy(grp, rotation_urls)
 
 
