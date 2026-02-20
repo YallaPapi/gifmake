@@ -22,6 +22,7 @@ from core.post_history import (
     get_warmup_status, get_warmup_day, get_warmed_today_ids,
     get_all_warmup_stats, get_today_sessions, reset_today_warmup,
     get_daily_cap, get_daily_totals,
+    record_karma, get_latest_karma,
 )
 from processors.account_profile import (
     ProfileManager,
@@ -647,7 +648,7 @@ class WarmupTab:
         all_frame = ctk.CTkFrame(self.parent, fg_color=CARD_FG, corner_radius=8,
                                  border_width=2, border_color=("#15803D", "#166534"))
         all_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(3, 5))
-        all_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        all_frame.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
 
         ctk.CTkLabel(
             all_frame, text="STEP 1: MULTI-ACCOUNT WARMUP (ALL PROXY GROUPS)",
@@ -719,6 +720,12 @@ class WarmupTab:
             height=42, fg_color="#B45309", hover_color="#92400E",
             command=self._reset_today)
         self.reset_today_btn.grid(row=3, column=3, sticky="ew", padx=4, pady=(0, 6))
+
+        self.karma_btn = ctk.CTkButton(
+            all_frame, text="Check Karma", font=("Segoe UI", 13, "bold"),
+            height=42, fg_color="#6D28D9", hover_color="#5B21B6",
+            command=self._start_karma_check)
+        self.karma_btn.grid(row=3, column=4, sticky="ew", padx=4, pady=(0, 6))
 
         # Proxy group progress â€" with header explaining what the groups are
         ctk.CTkLabel(
@@ -2790,6 +2797,133 @@ class WarmupTab:
         self._accounts_at_cap = set()
         self._log(f"Reset {count} account(s) + daily caps — all can re-run today.")
         self._refresh_stats_panel()
+
+    # ── Karma checking ──
+
+    def _start_karma_check(self):
+        """Launch karma check in background thread."""
+        self.karma_btn.configure(state="disabled", text="Checking...")
+        self._log("=== KARMA CHECK STARTED ===")
+        threading.Thread(target=self._karma_check_worker, daemon=True).start()
+
+    def _karma_check_worker(self):
+        """Check Reddit karma for all active accounts via public JSON API."""
+        import json as _json
+        try:
+            # Load proxy config — use first available proxy for API requests
+            config_path = os.path.join(
+                os.path.dirname(__file__), "..", "..", "config", "schedule_config.json")
+            with open(config_path, encoding="utf-8") as f:
+                sched = _json.load(f)
+            proxy_groups = sched.get("proxy_groups", {})
+            proxy_url = None
+            for grp in ("P", "G", "F", "4u"):
+                http_str = proxy_groups.get(grp, {}).get("http", "")
+                if http_str:
+                    # Format: "http://host:port:user:pass"
+                    parts = http_str.replace("http://", "").split(":")
+                    if len(parts) == 4:
+                        proxy_url = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
+                    break
+
+            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+
+            # Discover active accounts
+            accounts = self._discover_all_accounts()
+            if not accounts:
+                self.app.after(0, self._log, "No accounts found")
+                return
+
+            # Load ban log to skip banned accounts
+            ban_log = self._load_ban_log()
+            banned_ids = {k for k, v in ban_log.items() if v.get("status") == "permaban"}
+
+            all_accounts = []
+            for grp, accs in sorted(accounts.items()):
+                for acc in accs:
+                    if acc["adspower_id"] not in banned_ids:
+                        all_accounts.append(acc)
+
+            self.app.after(0, self._log,
+                           f"Checking karma for {len(all_accounts)} active accounts...")
+
+            results = []
+            for i, acc in enumerate(all_accounts):
+                username = acc["username"]
+                try:
+                    resp = requests.get(
+                        f"https://www.reddit.com/user/{username}/about.json",
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                        proxies=proxies, timeout=15)
+
+                    if resp.status_code == 404:
+                        results.append({
+                            "username": username, "group": acc["proxy_group"],
+                            "adspower_id": acc["adspower_id"],
+                            "status": "NOT FOUND", "total_karma": 0})
+                        self.app.after(0, self._log,
+                                       f"  {username}: NOT FOUND (suspended/deleted?)")
+                    elif resp.status_code == 200:
+                        data = resp.json().get("data", {})
+                        ck = data.get("comment_karma", 0)
+                        lk = data.get("link_karma", 0)
+                        tk = data.get("total_karma", ck + lk)
+                        created = data.get("created_utc", 0)
+                        age_days = int((time.time() - created) / 86400) if created else 0
+
+                        record_karma(acc["adspower_id"], username, ck, lk,
+                                     tk, age_days, int(created))
+                        results.append({
+                            "username": username, "group": acc["proxy_group"],
+                            "adspower_id": acc["adspower_id"],
+                            "status": "ok", "comment_karma": ck,
+                            "link_karma": lk, "total_karma": tk,
+                            "age_days": age_days})
+                    else:
+                        results.append({
+                            "username": username, "group": acc["proxy_group"],
+                            "adspower_id": acc["adspower_id"],
+                            "status": f"HTTP {resp.status_code}", "total_karma": 0})
+                        self.app.after(0, self._log,
+                                       f"  {username}: HTTP {resp.status_code}")
+                except Exception as e:
+                    results.append({
+                        "username": username, "group": acc["proxy_group"],
+                        "adspower_id": acc["adspower_id"],
+                        "status": f"error: {e}", "total_karma": 0})
+
+                # Rate limit: 1 req per 2 seconds
+                if i < len(all_accounts) - 1:
+                    time.sleep(2)
+
+            # Print summary sorted by karma
+            results.sort(key=lambda r: r.get("total_karma", 0), reverse=True)
+            self.app.after(0, self._log, "\n=== KARMA REPORT ===")
+            self.app.after(0, self._log,
+                           f"{'Username':<28} {'Group':<5} {'Comment':>8} {'Link':>8} {'Total':>8} {'Age':>6}")
+            self.app.after(0, self._log, "-" * 72)
+            for r in results:
+                if r["status"] == "ok":
+                    self.app.after(0, self._log,
+                                   f"{r['username']:<28} {r['group']:<5} "
+                                   f"{r['comment_karma']:>8} {r['link_karma']:>8} "
+                                   f"{r['total_karma']:>8} {r['age_days']:>5}d")
+                else:
+                    self.app.after(0, self._log,
+                                   f"{r['username']:<28} {r['group']:<5} {r['status']}")
+
+            ok_count = sum(1 for r in results if r["status"] == "ok")
+            total_karma = sum(r.get("total_karma", 0) for r in results)
+            self.app.after(0, self._log,
+                           f"\n{ok_count}/{len(results)} accounts checked | "
+                           f"Total karma across all: {total_karma}")
+            self.app.after(0, self._log, "=== KARMA CHECK DONE ===")
+
+        except Exception as e:
+            self.app.after(0, self._log, f"Karma check failed: {e}")
+        finally:
+            self.app.after(0, lambda: self.karma_btn.configure(
+                state="normal", text="Check Karma"))
 
     # ── Countdown timer for inter-cycle pauses ──
 

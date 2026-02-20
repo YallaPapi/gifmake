@@ -112,6 +112,21 @@ def _init_tables(conn):
 
         CREATE INDEX IF NOT EXISTS idx_ws_profile_date
             ON warmup_sessions(profile_id, date);
+
+        CREATE TABLE IF NOT EXISTS karma_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id TEXT NOT NULL,
+            username TEXT NOT NULL,
+            comment_karma INTEGER DEFAULT 0,
+            link_karma INTEGER DEFAULT 0,
+            total_karma INTEGER DEFAULT 0,
+            account_age_days INTEGER DEFAULT 0,
+            created_utc INTEGER DEFAULT 0,
+            checked_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_karma_profile
+            ON karma_checks(profile_id, checked_at);
     """)
     conn.commit()
 
@@ -632,6 +647,56 @@ def get_today_sessions(profile_id=None):
                    GROUP BY profile_id""",
                 (today,)
             ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def record_karma(profile_id, username, comment_karma, link_karma,
+                  total_karma, account_age_days, created_utc):
+    """Save a karma check result."""
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """INSERT INTO karma_checks
+               (profile_id, username, comment_karma, link_karma,
+                total_karma, account_age_days, created_utc, checked_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (profile_id, username, comment_karma, link_karma,
+             total_karma, account_age_days, created_utc,
+             datetime.now().isoformat()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_latest_karma(profile_id=None):
+    """Get the most recent karma check for each profile (or one specific profile).
+
+    Returns list of dicts with username, comment_karma, link_karma,
+    total_karma, account_age_days, checked_at.
+    """
+    conn = _get_conn()
+    try:
+        if profile_id:
+            rows = conn.execute(
+                """SELECT profile_id, username, comment_karma, link_karma,
+                          total_karma, account_age_days, checked_at
+                   FROM karma_checks
+                   WHERE profile_id = ?
+                   ORDER BY checked_at DESC LIMIT 1""",
+                (profile_id,)).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT k.profile_id, k.username, k.comment_karma, k.link_karma,
+                          k.total_karma, k.account_age_days, k.checked_at
+                   FROM karma_checks k
+                   INNER JOIN (
+                       SELECT profile_id, MAX(checked_at) as max_checked
+                       FROM karma_checks GROUP BY profile_id
+                   ) latest ON k.profile_id = latest.profile_id
+                              AND k.checked_at = latest.max_checked
+                   ORDER BY k.total_karma DESC""").fetchall()
         return [dict(row) for row in rows]
     finally:
         conn.close()
