@@ -2341,6 +2341,10 @@ class WarmupTab:
                                "\n=== NO ACTIVITY THIS CYCLE — STOPPING ===")
                 break
 
+            # Auto karma check after each cycle
+            if not self._run_all_stop:
+                self._run_karma_check_batch(accounts_by_group)
+
             # Inter-cycle pause: 45-120 minutes
             pause_min = random.randint(45, 120)
             pause_sec = pause_min * 60
@@ -2799,6 +2803,83 @@ class WarmupTab:
         self._refresh_stats_panel()
 
     # ── Karma checking ──
+
+    def _run_karma_check_batch(self, accounts_by_group):
+        """Auto-run karma check via Reddit JSON API after a warmup cycle.
+
+        Called automatically at end of each cycle — no GUI interaction needed.
+        Uses proxy from schedule_config to avoid IP exposure.
+        """
+        import json as _json
+        try:
+            # Load proxy config
+            config_path = os.path.join(
+                os.path.dirname(__file__), "..", "..", "config", "schedule_config.json")
+            proxy_url = None
+            try:
+                with open(config_path, encoding="utf-8") as f:
+                    sched = _json.load(f)
+                proxy_groups = sched.get("proxy_groups", {})
+                for grp in ("P", "G", "F", "4u"):
+                    http_str = proxy_groups.get(grp, {}).get("http", "")
+                    if http_str:
+                        parts = http_str.replace("http://", "").split(":")
+                        if len(parts) == 4:
+                            proxy_url = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
+                        break
+            except Exception:
+                pass
+
+            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+
+            # Build flat list of non-banned accounts
+            banned_ids = {k for k, v in self._ban_log.items()
+                          if v.get("status") == "permaban"}
+            all_accounts = []
+            for grp, accs in accounts_by_group.items():
+                for acc in accs:
+                    if acc["adspower_id"] not in banned_ids:
+                        all_accounts.append(acc)
+
+            if not all_accounts:
+                return
+
+            self.app.after(0, self._log,
+                           f"\n--- Auto karma check: {len(all_accounts)} accounts ---")
+
+            checked = 0
+            errors = 0
+            for i, acc in enumerate(all_accounts):
+                username = acc["username"]
+                try:
+                    resp = requests.get(
+                        f"https://www.reddit.com/user/{username}/about.json",
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                        proxies=proxies, timeout=15)
+
+                    if resp.status_code == 200:
+                        data = resp.json().get("data", {})
+                        ck = data.get("comment_karma", 0)
+                        lk = data.get("link_karma", 0)
+                        tk = data.get("total_karma", ck + lk)
+                        created = data.get("created_utc", 0)
+                        age_days = int((time.time() - created) / 86400) if created else 0
+                        record_karma(acc["adspower_id"], username, ck, lk,
+                                     tk, age_days, int(created))
+                        checked += 1
+                    else:
+                        errors += 1
+                except Exception:
+                    errors += 1
+
+                if i < len(all_accounts) - 1:
+                    time.sleep(2)
+
+            self.app.after(0, self._log,
+                           f"--- Karma check done: {checked} recorded, {errors} errors ---")
+
+        except Exception as e:
+            self.app.after(0, self._log, f"Auto karma check failed: {e}")
 
     def _start_karma_check(self):
         """Launch karma check in background thread."""
