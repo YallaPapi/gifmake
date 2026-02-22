@@ -667,9 +667,30 @@ class WarmupTab:
         all_desc.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 6))
         _auto_wrap(all_desc)
 
+        # Proxy group toggles — uncheck a group to skip it (e.g. while VA creates accounts)
+        proxy_toggle_row = ctk.CTkFrame(all_frame, fg_color="transparent")
+        proxy_toggle_row.grid(row=2, column=0, columnspan=5, sticky="ew", padx=8, pady=(0, 4))
+
+        ctk.CTkLabel(
+            proxy_toggle_row, text="Proxy groups:",
+            font=("Segoe UI", 13, "bold"), text_color=("#374151", "#E5E7EB"),
+        ).pack(side="left", padx=(0, 8))
+
+        self._proxy_group_vars = {}
+        for grp in ["P", "G", "F", "4u"]:
+            var = ctk.BooleanVar(value=True)
+            cb = ctk.CTkCheckBox(
+                proxy_toggle_row, text=grp, variable=var,
+                font=("Segoe UI", 13, "bold"),
+                text_color=("#15803D", "#4ADE80"),
+                onvalue=True, offvalue=False, width=60,
+            )
+            cb.pack(side="left", padx=(0, 6))
+            self._proxy_group_vars[grp] = var
+
         # Poetry warmup toggle (applies to ALL accounts in multi-warmup)
         poetry_row = ctk.CTkFrame(all_frame, fg_color="transparent")
-        poetry_row.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 6))
+        poetry_row.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 6))
         poetry_row.grid_columnconfigure(3, weight=1)
 
         self.poetry_all_var = ctk.BooleanVar(value=False)
@@ -707,45 +728,45 @@ class WarmupTab:
             font=("Segoe UI", 13, "bold"),
             height=42, fg_color="#15803D", hover_color="#166534",
             command=self._start_run_all)
-        self.run_all_btn.grid(row=3, column=0, columnspan=2, sticky="ew", padx=4, pady=(0, 6))
+        self.run_all_btn.grid(row=4, column=0, columnspan=2, sticky="ew", padx=4, pady=(0, 6))
 
         self.stop_all_btn = ctk.CTkButton(
             all_frame, text="Stop All (Graceful)", font=("Segoe UI", 13, "bold"),
             height=42, fg_color="#991B1B", hover_color="#7F1D1D",
             command=self._stop_run_all, state="disabled")
-        self.stop_all_btn.grid(row=3, column=2, sticky="ew", padx=4, pady=(0, 6))
+        self.stop_all_btn.grid(row=4, column=2, sticky="ew", padx=4, pady=(0, 6))
 
         self.reset_today_btn = ctk.CTkButton(
             all_frame, text="Reset Today", font=("Segoe UI", 13, "bold"),
             height=42, fg_color="#B45309", hover_color="#92400E",
             command=self._reset_today)
-        self.reset_today_btn.grid(row=3, column=3, sticky="ew", padx=4, pady=(0, 6))
+        self.reset_today_btn.grid(row=4, column=3, sticky="ew", padx=4, pady=(0, 6))
 
         self.karma_btn = ctk.CTkButton(
             all_frame, text="Check Karma", font=("Segoe UI", 13, "bold"),
             height=42, fg_color="#6D28D9", hover_color="#5B21B6",
             command=self._start_karma_check)
-        self.karma_btn.grid(row=3, column=4, sticky="ew", padx=4, pady=(0, 6))
+        self.karma_btn.grid(row=4, column=4, sticky="ew", padx=4, pady=(0, 6))
 
-        # Proxy group progress â€" with header explaining what the groups are
+        # Proxy group progress
         ctk.CTkLabel(
             all_frame, text="Proxy Group Progress:",
             font=("Segoe UI", 14, "bold"), text_color=("#6B7280", "#D1D5DB"),
             anchor="w",
-        ).grid(row=4, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 0))
+        ).grid(row=5, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 0))
 
         self._group_labels = {}
         for i, grp in enumerate(["P", "G", "F", "4u"]):
             lbl = ctk.CTkLabel(
                 all_frame, text=f"{grp}: waiting",
                 font=("Segoe UI", 13, "bold"), text_color=("#334155", "#E2E8F0"))
-            lbl.grid(row=5, column=i, padx=8, pady=2)
+            lbl.grid(row=6, column=i, padx=8, pady=2)
             self._group_labels[grp] = lbl
 
         self._run_all_overall_label = ctk.CTkLabel(
             all_frame, text="Not started",
             font=("Segoe UI", 13), text_color=("#4B5563", "#D1D5DB"))
-        self._run_all_overall_label.grid(row=6, column=0, columnspan=4, pady=(0, 8))
+        self._run_all_overall_label.grid(row=7, column=0, columnspan=4, pady=(0, 8))
 
         # Store last session's action log for the popout
         self._last_action_log = []
@@ -2113,9 +2134,15 @@ class WarmupTab:
             if not items:
                 break
 
+            # Filter prefixes by enabled proxy group checkboxes
+            enabled_prefixes = tuple(
+                p for p in PROXY_PREFIXES
+                if self._proxy_group_vars.get(p.strip(), ctk.BooleanVar(value=True)).get()
+            )
+
             for item in items:
                 name = (item.get("name") or "").strip()
-                for prefix in PROXY_PREFIXES:
+                for prefix in enabled_prefixes:
                     if name.startswith(prefix):
                         grp = prefix.strip()
                         username = name[len(prefix):].strip()
@@ -2257,7 +2284,12 @@ class WarmupTab:
 
     def _continuous_orchestrator(self, grok_key):
         """Background thread: continuous cycling until all accounts hit daily caps or stopped."""
-        self.app.after(0, self._log, "=== CONTINUOUS WARMUP STARTED ===")
+        enabled = [g for g, v in self._proxy_group_vars.items() if v.get()]
+        skipped = [g for g, v in self._proxy_group_vars.items() if not v.get()]
+        group_msg = f"Proxy groups: {', '.join(enabled)}"
+        if skipped:
+            group_msg += f"  (skipping: {', '.join(skipped)})"
+        self.app.after(0, self._log, f"=== CONTINUOUS WARMUP STARTED === {group_msg}")
 
         # Clean up orphaned browsers from previous crashes
         closed = self._close_all_browsers()
