@@ -149,6 +149,8 @@ def check_account_health(page):
     """Check if the Reddit account is healthy (not suspended/banned).
 
     Call this before starting a posting session.
+    Uses reddit.com homepage to detect login state (NOT /user/me which
+    aggressively redirects to login and produces false negatives).
 
     Args:
         page: Playwright Page object
@@ -161,54 +163,73 @@ def check_account_health(page):
             - ("unknown_error", reason) if can't determine
     """
     try:
-        page.goto("https://www.reddit.com/user/me", timeout=30000)
+        # Go to reddit.com — logged-in users see their username in the page
+        page.goto("https://www.reddit.com", timeout=30000,
+                  wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
 
         current_url = page.url
 
-        # If redirected to login, not logged in
+        # If somehow redirected to login/register
         if "/login" in current_url or "/register" in current_url:
             return BanStatus.UNKNOWN_ERROR, "not logged in"
 
-        # Check for suspension page
-        try:
-            body_text = page.inner_text("body").lower()
-        except Exception:
-            body_text = ""
-
-        for pattern in ACCOUNT_SUSPENDED_PATTERNS:
-            if pattern in body_text:
-                return BanStatus.ACCOUNT_SUSPENDED, pattern
-
-        # Try to extract username from the page
+        # Try to find username from the page (logged-in indicator)
         username = None
-        if "/user/" in current_url:
-            parts = current_url.split("/user/")
-            if len(parts) > 1:
-                username = parts[1].strip("/").split("/")[0].split("?")[0]
+        try:
+            # Shreddit nav shows username in the expand button or user drawer
+            for selector in [
+                'faceplate-tracker[noun="user_menu"]',
+                '#user-drawer-content',
+                'a[href*="/user/"][data-testid]',
+                'span[data-testid="user-name"]',
+            ]:
+                el = page.locator(selector).first
+                if el.count() > 0:
+                    text = el.inner_text().strip()
+                    if text and text != "Log In" and len(text) < 50:
+                        # Clean up: remove u/ prefix if present
+                        username = text.replace("u/", "").strip()
+                        break
+        except Exception:
+            pass
 
-        if username:
-            # Double-check: visit the public profile page
-            # Reddit shows ban/suspension on the public profile, NOT on /user/me
+        # Fallback: check if login/signup buttons are prominent (= not logged in)
+        if not username:
+            try:
+                login_btn = page.locator(
+                    'a[href*="/login"], button:has-text("Log In")'
+                ).first
+                if login_btn.count() > 0 and login_btn.is_visible():
+                    # Login button visible — but this alone isn't conclusive on
+                    # Reddit's new UI. Check for the user menu as counter-signal.
+                    user_menu = page.locator(
+                        '#expand-user-drawer-button, '
+                        'faceplate-tracker[noun="user_menu"]'
+                    ).first
+                    if user_menu.count() == 0:
+                        return BanStatus.UNKNOWN_ERROR, "not logged in"
+            except Exception:
+                pass
+
+        # If we got a username, check for suspension on the profile page
+        if username and username not in ("", "Log In", "Sign Up"):
             try:
                 page.goto(f"https://www.reddit.com/user/{username}",
                           timeout=15000, wait_until="domcontentloaded")
                 page.wait_for_timeout(2000)
                 profile_text = page.inner_text("body").lower()
 
-                # Check 1: Text patterns (Reddit shows "This account has been banned")
                 for pattern in ACCOUNT_SUSPENDED_PATTERNS:
                     if pattern in profile_text:
                         _dump_page(page, f"suspended_{username}")
                         return BanStatus.ACCOUNT_SUSPENDED, f"{username}: {pattern}"
 
-                # Check 2: suspended-snoo.png image (always present on ban pages)
                 has_snoo = page.locator('img[src*="suspended-snoo"]').count() > 0
                 if has_snoo:
                     _dump_page(page, f"suspended_{username}")
                     return BanStatus.ACCOUNT_SUSPENDED, f"{username}: suspended-snoo image detected"
 
-                # Check 3: Empty profile with no karma/content (another ban signal)
                 has_content = page.locator('shreddit-post, [data-testid="post-container"]').count() > 0
                 has_karma = "karma" in profile_text
                 if not has_content and not has_karma and "sorry" in profile_text:
@@ -219,6 +240,7 @@ def check_account_health(page):
 
             return BanStatus.OK, username
 
+        # No username found but no login redirect either — assume OK
         return BanStatus.OK, "logged in"
 
     except Exception as e:
