@@ -86,6 +86,41 @@ def _extract_post_url(page_url: str, subreddit: str) -> Optional[str]:
     return None
 
 
+def _check_submission_outcome(page: Page, subreddit: str) -> tuple[bool, str]:
+    """Validate Reddit submission result (success, ban, rate limit, or unknown)."""
+    current_url = page.url
+
+    # Fast path: URL-based extraction (works for both old and new Shreddit redirects)
+    post_url = _extract_post_url(current_url, subreddit)
+    if post_url:
+        return True, post_url
+
+    # Deep check: inspect page for sub bans / rate limits / submit errors.
+    try:
+        from core.ban_detector import check_post_result, BanStatus
+    except Exception as e:
+        try:
+            import sys
+            src_root = str(Path(__file__).resolve().parents[2])
+            if src_root not in sys.path:
+                sys.path.insert(0, src_root)
+            from core.ban_detector import check_post_result, BanStatus
+        except Exception:
+            logger.debug(f"ban_detector import unavailable, falling back to URL heuristic: {e}")
+            return ("/submit" not in current_url), current_url
+
+    try:
+        status, detail = check_post_result(page)
+    except Exception as e:
+        logger.warning(f"Post result check failed: {e}")
+        return ("/submit" not in current_url), current_url
+
+    if status == BanStatus.OK:
+        return True, detail
+
+    return False, f"{status}: {detail}"
+
+
 class AdsPowerClient:
     """Simple AdsPower API client"""
 
@@ -390,14 +425,14 @@ def post_link_to_subreddit(
 
     # Wait for redirect
     page.wait_for_timeout(5000)
-    current_url = page.url
-
-    if "/comments/" in current_url:
-        logger.info(f"SUCCESS! Post created: {current_url}")
+    ok, detail = _check_submission_outcome(page, subreddit)
+    if ok:
+        logger.info(f"SUCCESS! Post created: {detail}")
         return True
-    else:
-        logger.info(f"Current URL: {current_url}")
-        return "/submit" not in current_url
+
+    logger.error(f"Post failed after submit: {detail}")
+    _dump_failure(page, subreddit, "submit_failed")
+    return False
 
 
 def _try_select_flair(page: Page):
@@ -743,16 +778,14 @@ def post_file_to_subreddit(
 
     # Wait for redirect (file posts can take longer to process)
     page.wait_for_timeout(10000)
-    current_url = page.url
-
-    post_url = _extract_post_url(current_url, subreddit)
-    if post_url:
-        logger.info(f"SUCCESS! Post URL: {post_url}")
+    ok, detail = _check_submission_outcome(page, subreddit)
+    if ok:
+        logger.info(f"SUCCESS! Post URL: {detail}")
         return True
-    else:
-        logger.warning(f"Uncertain result. URL after submit: {current_url}")
-        _dump_failure(page, subreddit, "uncertain_result")
-        return "/submit" not in current_url
+
+    logger.warning(f"Post failed or uncertain after submit: {detail}")
+    _dump_failure(page, subreddit, "uncertain_result")
+    return False
 
 
 def batch_post_from_csv(
@@ -1191,6 +1224,12 @@ def main_batch(csv_file: str):
                         'posted_at': ''
                     })
                     total_failed += 1
+        finally:
+            try:
+                client.stop_browser(profile_id)
+                logger.info(f"Stopped AdsPower browser for {profile_id}")
+            except Exception as stop_err:
+                logger.warning(f"Failed to stop AdsPower browser for {profile_id}: {stop_err}")
 
         logger.info(f"Finished profile {profile_id}")
 

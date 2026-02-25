@@ -14,6 +14,7 @@ import logging
 import time
 import os
 import random
+import threading
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -26,8 +27,25 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(message)s",
 )
 
-ADSPOWER_API = "http://localhost:50325"
-API_KEY = "caeba572837f3da2adc39f45f0751da9"
+def _load_adspower_settings():
+    """Load AdsPower API base/key from env or queue_config.json."""
+    api_base = os.environ.get("ADSPOWER_API_BASE", "").strip()
+    api_key = os.environ.get("ADSPOWER_API_KEY", "").strip()
+
+    try:
+        with open(os.path.join("config", "queue_config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        if not api_base:
+            api_base = str(cfg.get("adspower_api_base", "")).strip()
+        if not api_key:
+            api_key = str(cfg.get("adspower_api_key", "") or cfg.get("api_key", "")).strip()
+    except Exception:
+        pass
+
+    return (api_base or "http://127.0.0.1:50325").rstrip("/"), api_key
+
+
+ADSPOWER_API, API_KEY = _load_adspower_settings()
 
 # Load Grok key from config/api_keys.json (not hardcoded — GitHub push protection)
 def _load_grok_key():
@@ -44,6 +62,7 @@ PROXY_PREFIXES = ("P ", "G ", "F ", "4u ")
 
 BAN_LOG_PATH = os.path.join("data", "warmup_bans.json")
 SCHEDULE_CONFIG_PATH = os.path.join("config", "schedule_config.json")
+BAN_LOG_LOCK = threading.RLock()
 
 
 def close_all_browsers():
@@ -94,18 +113,63 @@ def load_proxy_rotation_urls():
 def load_ban_log():
     """Load the ban log. Returns dict {adspower_id: {status, detected, ...}}."""
     if os.path.exists(BAN_LOG_PATH):
-        with open(BAN_LOG_PATH, "r") as f:
-            return json.load(f)
+        try:
+            with open(BAN_LOG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logging.getLogger("banlog").warning(f"Failed to read ban log {BAN_LOG_PATH}: {e}")
+            return {}
     return {}
 
 
 def save_ban_log(ban_log):
     """Save ban log to disk (thread-safe via atomic write)."""
     os.makedirs(os.path.dirname(BAN_LOG_PATH), exist_ok=True)
-    tmp = BAN_LOG_PATH + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(ban_log, f, indent=2)
-    os.replace(tmp, BAN_LOG_PATH)
+    tmp = f"{BAN_LOG_PATH}.{os.getpid()}.{threading.get_ident()}.tmp"
+    with BAN_LOG_LOCK:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(dict(ban_log), f, indent=2)
+        os.replace(tmp, BAN_LOG_PATH)
+
+
+def _iter_action_texts(stats):
+    """Yield action_log text strings from a warmup stats dict."""
+    if not isinstance(stats, dict):
+        return
+    for entry in (stats.get("action_log") or []):
+        if isinstance(entry, dict):
+            text = (entry.get("text") or "").strip()
+        else:
+            text = str(entry).strip()
+        if text:
+            yield text
+
+
+def _warmup_failure_reason(stats):
+    """Return a failure reason string for clearly failed warmup sessions."""
+    if not isinstance(stats, dict):
+        return "no_stats"
+
+    scrolls = int(stats.get("scrolls") or 0)
+    if scrolls <= 0:
+        return "zero_scrolls"
+
+    for text in _iter_action_texts(stats):
+        tl = text.lower()
+        if "no_feed_loaded" in tl:
+            return "no_feed_loaded"
+
+    return ""
+
+
+def _first_network_error_text(stats):
+    for text in _iter_action_texts(stats):
+        tl = text.lower()
+        if ("err_tunnel_connection_failed" in tl
+                or "err_socks_connection_failed" in tl
+                or "no_feed_loaded" in tl):
+            return text[:200]
+    return ""
 
 
 # -- AdsPower account discovery --
@@ -237,7 +301,8 @@ def warmup_one(account, ban_log, rotation_urls):
     log = logging.getLogger(f"{grp}:{profile_key}")
 
     # Skip if permanently banned
-    prev = ban_log.get(adspower_id, {})
+    with BAN_LOG_LOCK:
+        prev = dict(ban_log.get(adspower_id, {}))
     if prev.get("status") == "permaban":
         log.info(f"SKIP — permabanned ({prev.get('detected', '?')})")
         return {"profile": profile_key, "status": "skip_banned",
@@ -316,22 +381,24 @@ def warmup_one(account, ban_log, rotation_urls):
 
             if status == BanStatus.ACCOUNT_SUSPENDED:
                 log.warning(f"BANNED: {detail}")
-                ban_log[adspower_id] = {
-                    "status": "permaban", "username": profile_key,
-                    "proxy_group": grp, "detail": detail,
-                    "detected": datetime.now().isoformat(),
-                }
+                with BAN_LOG_LOCK:
+                    ban_log[adspower_id] = {
+                        "status": "permaban", "username": profile_key,
+                        "proxy_group": grp, "detail": detail,
+                        "detected": datetime.now().isoformat(),
+                    }
                 save_ban_log(ban_log)
                 return {"profile": profile_key, "status": "banned",
                         "adspower_id": adspower_id, "detail": detail}
 
             if status == BanStatus.SHADOW_BANNED:
                 log.warning(f"SHADOW BANNED: {detail}")
-                ban_log[adspower_id] = {
-                    "status": "shadowban", "username": profile_key,
-                    "proxy_group": grp, "detail": detail,
-                    "detected": datetime.now().isoformat(),
-                }
+                with BAN_LOG_LOCK:
+                    ban_log[adspower_id] = {
+                        "status": "shadowban", "username": profile_key,
+                        "proxy_group": grp, "detail": detail,
+                        "detected": datetime.now().isoformat(),
+                    }
                 save_ban_log(ban_log)
                 return {"profile": profile_key, "status": "shadowbanned",
                         "adspower_id": adspower_id, "detail": detail}
@@ -375,13 +442,22 @@ def warmup_one(account, ban_log, rotation_urls):
 
             stats = warmer.run_daily_warmup()
 
+            failure_reason = _warmup_failure_reason(stats)
+            if failure_reason:
+                detail = _first_network_error_text(stats) or failure_reason
+                log.warning(f"WARMUP FAILED ({failure_reason}) — {detail}")
+                return {"profile": profile_key, "status": "proxy_failed",
+                        "adspower_id": adspower_id, "proxy_group": grp,
+                        "error": detail, "stats": stats}
+
             log.info(f"DONE — {stats['comments']}cmt, {stats['upvotes']}up, "
                      f"{stats['joins']}join, {stats['total_sec']//60}m")
 
             # Clear non-permaban entries on success
-            if adspower_id in ban_log and ban_log[adspower_id].get("status") != "permaban":
-                del ban_log[adspower_id]
-                save_ban_log(ban_log)
+            with BAN_LOG_LOCK:
+                if adspower_id in ban_log and ban_log[adspower_id].get("status") != "permaban":
+                    del ban_log[adspower_id]
+                    save_ban_log(ban_log)
 
             return {"profile": profile_key, "status": "success",
                     "adspower_id": adspower_id, "proxy_group": grp,
@@ -434,15 +510,25 @@ def run_group(group, accounts, ban_log, rotation_urls):
     shuffled = list(accounts)
     random.shuffle(shuffled)
 
-    active = [a for a in shuffled
-              if ban_log.get(a["adspower_id"], {}).get("status") != "permaban"]
+    with BAN_LOG_LOCK:
+        active = [a for a in shuffled
+                  if ban_log.get(a["adspower_id"], {}).get("status") != "permaban"]
     log.info(f"Starting {group}: {len(active)} accounts ({len(accounts) - len(active)} permabanned)")
 
     for i, acc in enumerate(active):
         result = warmup_one(acc, ban_log, rotation_urls)
+        status = result.get("status")
+        if status == "proxy_failed":
+            log.warning(
+                f"{acc['username']}: proxy/feed failure detected — retrying once on fresh IP")
+            retry_result = warmup_one(acc, ban_log, rotation_urls)
+            if retry_result:
+                retry_result["retried_after"] = status
+                result = retry_result
+                status = result.get("status")
+
         results.append(result)
 
-        status = result.get("status")
         if status == "banned":
             log.warning(f"{acc['username']}: BANNED — continuing with remaining accounts")
 
@@ -478,6 +564,11 @@ if __name__ == "__main__":
     logger.info("Architecture: 1 thread per proxy group, sequential within group")
     logger.info("")
 
+    if not accounts_by_group:
+        logger.error("No AdsPower reddit bot profiles were discovered; aborting warmup run.")
+        close_all_browsers()
+        sys.exit(1)
+
     # Launch 1 thread per proxy group — max 4 concurrent (one per group)
     all_results = []
     with ThreadPoolExecutor(max_workers=len(accounts_by_group)) as pool:
@@ -507,7 +598,7 @@ if __name__ == "__main__":
 
     for status, names in sorted(by_status.items()):
         logger.info(f"  {status}: {len(names)}")
-        if status in ("banned", "shadowbanned", "not_logged_in", "browser_crashed", "error"):
+        if status in ("banned", "shadowbanned", "not_logged_in", "browser_crashed", "error", "proxy_failed"):
             for n in names:
                 logger.info(f"    - {n}")
 

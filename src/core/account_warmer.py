@@ -28,6 +28,24 @@ from core.post_history import init_warmup, record_activity, record_session
 
 logger = logging.getLogger(__name__)
 
+
+def warmup_stats_ok(stats):
+    """True when a warmup run actually started and produced a usable session result."""
+    if not isinstance(stats, dict):
+        return False
+    if stats.get("ok") is False:
+        return False
+    # Require actual browsing activity. `sessions` / `total_sec` alone can be
+    # nonzero for startup-only runs (feed load, immediate stop/proxy death).
+    for key in ("scrolls", "posts_clicked", "comments", "joins",
+                "upvotes", "downvotes", "subs_browsed"):
+        try:
+            if int(stats.get(key, 0) or 0) > 0:
+                return True
+        except Exception:
+            continue
+    return False
+
 GROK_MODEL = "grok-4-1-fast-reasoning"
 GROK_URL = "https://api.x.ai/v1/chat/completions"
 
@@ -466,6 +484,7 @@ class AccountWarmer:
             "joins": 0, "posts_clicked": 0, "subs_browsed": 0,
             "sessions": 0, "total_sec": 0, "scrolls": 0,
         }
+        self._run_failure = None
         # Per-action log for UI display: list of dicts
         # {type, sub, url, text, status, ts}
         self.action_log = []
@@ -776,11 +795,15 @@ class AccountWarmer:
             "joins": 0, "posts_clicked": 0, "subs_browsed": 0,
             "sessions": 0, "total_sec": 0, "scrolls": 0,
         }
+        self.stats["ok"] = True
+        self.stats["failure_reason"] = ""
+        self.stats["failure_detail"] = ""
         self.action_log = []
         self._max_comments = max_comments or 0  # 0 = unlimited
         # Reset sub rotation tracking per run
         self._last_comment_sub = None
         self._sub_comment_counts = {}
+        self._run_failure = None
 
         # Clamp per-run caps to remaining daily budget
         if remaining_budget:
@@ -803,8 +826,8 @@ class AccountWarmer:
                 f"max comments: {max_comments or 'unlimited'}"
             )
             self._vote_ratio = random.uniform(0.70, 0.85)
-            self._run_browse_session(session_sec=total_sec)
-            self.stats["sessions"] = 1
+            if self._run_browse_session(session_sec=total_sec):
+                self.stats["sessions"] = 1
         else:
             # Auto mode: day-scaled sessions
             plan = _get_session_plan(self.day)
@@ -826,7 +849,10 @@ class AccountWarmer:
                 # Each session gets a fresh vote ratio (simulates mood)
                 self._vote_ratio = random.uniform(0.70, 0.85)
                 session_sec = random.randint(plan["min_session_sec"], plan["max_session_sec"])
-                self._run_browse_session(session_sec=session_sec)
+                if not self._run_browse_session(session_sec=session_sec):
+                    if not self.stop_requested:
+                        logger.warning("Session aborted before feed became usable")
+                    break
                 self.stats["sessions"] += 1
 
                 # Pause between sessions (compressed — in reality would be hours)
@@ -836,7 +862,24 @@ class AccountWarmer:
                     if not self._wait_for_timeout(pause_ms):
                         break
 
-        # Record to DB
+        self.stats["action_log"] = list(self.action_log)
+        if not warmup_stats_ok(self.stats):
+            self.stats["ok"] = False
+            if self.stop_requested:
+                self.stats["failure_reason"] = "stopped"
+                self.stats["failure_detail"] = "stop requested before warmup activity began"
+            elif self._run_failure:
+                self.stats["failure_reason"] = self._run_failure.get("reason", "warmup_failed")
+                self.stats["failure_detail"] = self._run_failure.get("detail", "")
+            else:
+                self.stats["failure_reason"] = "warmup_not_started"
+                self.stats["failure_detail"] = "no feed loaded and no activity was recorded"
+            logger.warning(
+                "Warmup aborted before usable session start: %s (%s)",
+                self.stats["failure_reason"], self.stats["failure_detail"])
+            return self.stats
+
+        # Record to DB only for real runs (prevents zero-scroll false-success rows)
         record_activity(self.profile_id, "upvotes", self.stats["upvotes"])
         record_activity(self.profile_id, "comments", self.stats["comments"])
         record_activity(self.profile_id, "joins", self.stats["joins"])
@@ -855,7 +898,6 @@ class AccountWarmer:
             self.stats["karma"] = karma_data
 
         logger.info(f"Warmup done: {self.stats}")
-        self.stats["action_log"] = list(self.action_log)
         return self.stats
 
     # â”€â”€ Browse session â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -900,15 +942,46 @@ class AccountWarmer:
 
         _PROXY_DEAD_TOKENS = ("tunnel", "socks", "proxy", "err_proxy",
                                "net::err_connection", "net::err_timed_out")
+        _BROWSER_CLOSED_TOKENS = (
+            "target page, context or browser has been closed",
+            "page has been closed",
+            "browser has been closed",
+            "target closed",
+            "context closed",
+            "connection closed",
+            "session closed",
+        )
 
         feed_url = None
         proxy_dead = False
         for candidate in feed_candidates:
+            if self.stop_requested:
+                self._run_failure = {
+                    "reason": "stopped",
+                    "detail": "stop requested during feed load",
+                }
+                logger.info("Stop requested during feed load; session not started")
+                return False
             try:
                 self.page.goto(candidate, timeout=30000,
                                wait_until="domcontentloaded")
-                self._wait_for_timeout(random.randint(2000, 5000))
+                if not self._wait_for_timeout(random.randint(2000, 5000)):
+                    if self.stop_requested:
+                        self._run_failure = {
+                            "reason": "stopped",
+                            "detail": "stop requested during feed load wait",
+                        }
+                        logger.info("Stop requested during feed load wait; session not started")
+                        return False
+                    break
                 dismiss_over18(self.page)
+                if self.stop_requested:
+                    self._run_failure = {
+                        "reason": "stopped",
+                        "detail": "stop requested after feed load before first scroll",
+                    }
+                    logger.info("Stop requested after feed load; session not started")
+                    return False
                 post_count = self.page.locator('shreddit-post').count()
                 if post_count >= 2:
                     feed_url = candidate
@@ -918,6 +991,13 @@ class AccountWarmer:
                 err_lower = str(e).lower()
                 logger.info(f"Feed {candidate} failed: {e}")
                 self._screenshot_error("feed_load_failed", f"{candidate}: {e}"[:150])
+                if any(tok in err_lower for tok in _BROWSER_CLOSED_TOKENS):
+                    self._run_failure = {
+                        "reason": "browser_closed",
+                        "detail": "page/context/browser closed while loading Reddit feed",
+                    }
+                    logger.warning(f"BROWSER CLOSED during feed load — aborting: {e}")
+                    return False
                 # Abort immediately on proxy/tunnel death — retrying is pointless
                 if any(tok in err_lower for tok in _PROXY_DEAD_TOKENS):
                     logger.warning(f"PROXY DEAD — aborting session immediately: {e}")
@@ -926,12 +1006,21 @@ class AccountWarmer:
 
         if not feed_url:
             if proxy_dead:
+                self._run_failure = {
+                    "reason": "proxy_dead",
+                    "detail": "proxy/tunnel failure while loading Reddit feed",
+                }
                 logger.warning("Proxy tunnel is dead, session cannot start")
             else:
+                self._run_failure = {
+                    "reason": "no_feed_loaded",
+                    "detail": "all feed candidates failed to produce posts",
+                }
                 logger.warning("No feed URL produced posts, aborting session")
                 self._screenshot_error("no_feed_loaded", "all feed candidates failed")
-            return
+            return False
 
+        self._run_failure = None
         self._feed_url = feed_url  # Store for recovery in _explore_post
         logger.info(f"Session start: {feed_url} ({session_sec//60} min)")
         logger.info("Feed loaded, starting scroll loop")
@@ -941,6 +1030,13 @@ class AccountWarmer:
         empty_feed_count = 0  # Consecutive cycles with no posts on page
         while time.time() - start < session_sec:
             if self.stop_requested:
+                if scroll_count == 0:
+                    self._run_failure = {
+                        "reason": "stopped",
+                        "detail": "stop requested before first scroll cycle",
+                    }
+                    logger.info("Stop requested before first scroll; session not started")
+                    return False
                 logger.info("Stop requested, ending session early")
                 break
             if self._max_comments and self.stats["comments"] >= self._max_comments:
@@ -949,7 +1045,15 @@ class AccountWarmer:
             try:
                 # Scroll down
                 self.page.mouse.wheel(0, random.randint(300, 700))
-                self._wait_for_timeout(random.randint(1800, 4500))
+                if not self._wait_for_timeout(random.randint(1800, 4500)):
+                    if self.stop_requested and scroll_count == 0:
+                        self._run_failure = {
+                            "reason": "stopped",
+                            "detail": "stop requested during first scroll wait",
+                        }
+                        logger.info("Stop requested during first scroll wait; session not started")
+                        return False
+                    break
                 scroll_count += 1
 
                 elapsed_min = (time.time() - start) / 60
@@ -1052,9 +1156,24 @@ class AccountWarmer:
                 err_lower = str(e).lower()
                 logger.info(f"Scroll loop error: {e}")
                 self._screenshot_error("scroll_loop_exception", str(e)[:150])
+                if any(tok in err_lower for tok in _BROWSER_CLOSED_TOKENS):
+                    logger.warning(f"BROWSER CLOSED mid-session — aborting: {e}")
+                    if scroll_count == 0:
+                        self._run_failure = {
+                            "reason": "browser_closed",
+                            "detail": "page/context/browser closed during first scroll cycle",
+                        }
+                        return False
+                    break
                 # Proxy/tunnel dead — abort immediately, no recovery possible
                 if any(tok in err_lower for tok in _PROXY_DEAD_TOKENS):
                     logger.warning(f"PROXY DEAD mid-session — aborting: {e}")
+                    if scroll_count == 0:
+                        self._run_failure = {
+                            "reason": "proxy_dead",
+                            "detail": "proxy/tunnel failure during first scroll cycle",
+                        }
+                        return False
                     break
                 # Try to recover by going back to feed
                 try:
@@ -1075,6 +1194,7 @@ class AccountWarmer:
                     f"votes={self.stats['upvotes']}+{self.stats['downvotes']}, "
                     f"comments={self.stats['comments']}, "
                     f"joins={self.stats['joins']}")
+        return True
 
     # â”€â”€ Feed actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

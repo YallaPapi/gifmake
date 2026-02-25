@@ -531,6 +531,8 @@ class DailyScheduler:
                 self._rotate_proxy(task.proxy_group)
 
             stats = None
+            browser_started = False
+            retry_wait = 0
             try:
                 # 1. Start AdsPower browser
                 resp = _requests.get(
@@ -541,6 +543,7 @@ class DailyScheduler:
                 data = resp.json()
                 if data.get("code") != 0:
                     raise RuntimeError(f"AdsPower error: {data}")
+                browser_started = True
 
                 ws_endpoint = (data.get("data", {})
                                .get("ws", {}).get("puppeteer"))
@@ -642,21 +645,25 @@ class DailyScheduler:
                     f"[{task.display_name}] Attempt {attempt}/{max_retries}"
                     f" failed: {e}")
 
-                # Stop browser before retry
-                try:
-                    _requests.get(
-                        f"{api_base}/api/v1/browser/stop"
-                        f"?user_id={ads_id}&api_key={api_key}",
-                        timeout=30)
-                except Exception:
-                    pass
-
                 if attempt < max_retries:
-                    wait = 30 * attempt  # 30s, 60s, 90s
+                    retry_wait = 30 * attempt  # 30s, 60s, 90s
                     logger.info(
-                        f"[{task.display_name}] Waiting {wait}s "
+                        f"[{task.display_name}] Waiting {retry_wait}s "
                         f"before retry...")
-                    time.sleep(wait)
+            finally:
+                # Always stop the AdsPower browser for this attempt.
+                if browser_started:
+                    try:
+                        _requests.get(
+                            f"{api_base}/api/v1/browser/stop"
+                            f"?user_id={ads_id}&api_key={api_key}",
+                            timeout=30,
+                        )
+                    except Exception as stop_err:
+                        logger.warning(
+                            f"[{task.display_name}] Failed to stop browser: {stop_err}")
+            if retry_wait:
+                time.sleep(retry_wait)
 
         # All retries exhausted
         logger.error(
