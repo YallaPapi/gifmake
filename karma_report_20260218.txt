@@ -1,0 +1,291 @@
+=== WARMUP DAILY REPORT -- 2026-02-18 ===
+Accounts: 102 total | 102 good | 0 bad | 0 skipped
+Avg karma/comment: 0.0 | Ready for NSFW (>=1000): 0/0
+
+GOOD ACCOUNTS (102):
+Username              | Karma | Change | Comments | Status
+----------------------|-------|--------|----------|----------
+- reddit bot -  scarletsirenshe|     0 |    new |        2 | healthy
+- reddit bot -  smokyjadesessions|     0 |    new |        2 | healthy
+- reddit bot - sultrysadiesession|     0 |    new |        3 | healthy
+- reddit bot - darlingdaisydaily|     0 |    new |        2 | healthy
+- reddit bot -  modernmonamuse|     0 |    new |        3 | healthy
+- reddit bot -  softbellaunfiltered|     0 |    new |        3 | healthy
+- reddit bot -  latenightskyearchive|     0 |    new |        2 | healthy
+- reddit bot -  glossyolivialooks|     0 |    new |        2 | healthy
+- reddit bot -  opaloliviaaura|     0 |    new |        0 | healthy
+-reddit bot - delicatepulse|     0 |    new |        2 | healthy
+- reddit bot -  sultryzoediary|     0 |    new |        2 | healthy
+- reddit bot -  honeyedtessafantasy|     0 |    new |        2 | healthy
+- reddit bot -  goldengwengallery|     0 |    new |        2 | healthy
+- reddit bot -  cosmicclaraclub|     0 |    new |        3 | healthy
+- reddit bot -  wickedjadejournal|     0 |    new |        1 | healthy
+- reddit bot -  velvetmiaunfiltered|     0 |    new |        2 | healthy
+- reddit bot -  rawrileyrealm|     0 |    new |        2 | healthy
+- reddit bot - lovelylexilove|     0 |    new |        2 | healthy
+- reddit bot -  calmcassiecanvas|     0 |    new |        2 | healthy
+- reddit bot -  coyavalatehours|     0 |    new |        0 | healthy
+- reddit bot - honeyedlaylafantasy|     0 |    new |        2 | healthy
+- reddit bot - bubblybrittanyb|     0 |    new |        2 | healthy
+- reddit bot - honeyedbellalooks|     0 |    new |        2 | healthy
+- reddit bot - softskyeconfessions|     0 |    new |        1 | healthy
+- reddit bot - cozycleocontent|     0 |    new |        1 | healthy
+- reddit bot - shadowwillowprivater|     0 |    new |        2 | healthy
+- reddit bot - midnightbellaafterho|     0 |    new |        2 | healthy
+- reddit bot - softsloanestudio|     0 |    new |        2 | healthy
+- reddit bot - softcorerileystudio|     0 |    new |        0 | healthy
+-reddit bot - tendercurveink|     0 |    new |        2 | healthy
+- reddit bot - darkroxyconfessions|     0 |    new |        2 | healthy
+- reddit bot - shadowmaraconfession|     0 |    new |        3 | healthy
+- reddit bot - softskyestudio|     0 |    new |        3 | healthy
+- reddit bot - mysticmilamoments|     0 |    new |        2 | healthy
+- reddit bot - privatelaylaaura|     0 |    new |        1 | healthy
+- reddit bot - dreamydaphnediary|     0 |    new |        2 | healthy
+- reddit bot -hiddenbellaafter|     0 |    new |        2 | healthy
+- reddit bot - sweetfreyajournal|     0 |    new |        2 | healthy
+- reddit bot -glossygretaglow|     0 |    new |        1 | healthy
+- reddit bot - softcorefreyastudio|     0 |    new |        3 | healthy
+- reddit bot - goldengiaglow|     0 |    new |        1 | healthy
+- reddit bot - urbanumavibes|     0 |    new |        2 | healthy
+- reddit bot - coyskyesecrets|     0 |    new |        1 | healthy
+- reddit bot - actualariaaesthetic|     0 |    new |        2 | healthy
+- reddit bot -purepiapixels|     0 |    new |        2 | healthy
+- reddit bot -softcoreoliviamood|     0 |    new |        1 | healthy
+- reddit bot - barelymiamood|     0 |    new |        1 | healthy
+- reddit bot -darknovaprivateroom|     0 |    new |        2 | healthy
+- reddit bot -glossytessalooks|     0 |    new |        2 | healthy
+- reddit bot - sultryrileyunfiltere|     0 |    new |        2 | healthy
+- reddit bot - smokytessaaura|     0 |    new |        3 | healthy
+- reddit bot - faintbodyecho|     0 |    new |        3 | healthy
+- reddit bot -realrhearender|     0 |    new |        2 | healthy
+- reddit bot - softsadiestudio|     0 |    new |        3 | healthy
+- reddit bot - glossymaragallery|     0 |    new |        3 | healthy
+- reddit bot -electricivynights|     0 |    new |        1 | healthy
+reddit bot -  vixenvaleriev|     0 |    new |        2 | healthy
+- reddit bot - opaloliviaaura|     0 |    new |        1 | healthy
+- reddit bot - stormysloanestyle|     0 |    new |        2 | healthy
+- reddit bot - sweetskyegallery|     0 |    new |        0 | healthy
+- reddit bot - sweetnovaframes|     0 |    new |        1 | healthy
+- reddit bot - velvetskyeafterhours|     0 |    new |        2 | healthy
+- reddit bot -  daisydreamergirl|     0 |    new |        2 | healthy
+- reddit bot - shadowvioletarchive|     0 |    new |        2 | healthy
+-reddit bot - sweetheatmurmur|     0 |    new |        2 | healthy
+- reddit bot - truetoritales|     0 |    new |        0 | healthy
+- reddit bot - midnightrileysecrets|     0 |    new |        2 | healthy
+- reddit bot - lunarlenalooks|     0 |    new |        1 | healthy
+- reddit bot - smokylunamood|     0 |    new |        1 | healthy
+- reddit bot -midnightmayamode|     0 |    new |        1 | healthy
+- reddit bot - boldbriabeauty|     0 |    new |        2 | healthy
+- reddit bot - noirnadianotes|     0 |    new |        2 | healthy
+- reddit bot -  shadowjadediary|     0 |    new |        3 | healthy
+- reddit bot -  softcorerileystudio|     0 |    new |        2 | healthy
+- reddit bot -  glossylunaframes|     0 |    new |        2 | healthy
+- reddit bot - femmefreyaframe|     0 |    new |        2 | healthy
+- reddit bot -  sweetsuristyle|     0 |    new |        2 | healthy
+- reddit bot -  meetmollymoments|     0 |    new |        3 | healthy
+- reddit bot - purepaigeposes|     0 |    new |        2 | healthy
+- reddit bot - hiddenivyfantasy|     0 |    new |        2 | healthy
+- reddit bot -  darlingdemidaily|     0 |    new |        1 | healthy
+reddit bot - sunnyskyelife|     0 |    new |        0 | healthy
+- reddit bot -  kandykaracouture|     0 |    new |        3 | healthy
+- reddit bot -  coyvioletframes|     0 |    new |        0 | healthy
+- reddit bot -  velvetariagallery|     0 |    new |        0 | healthy
+- reddit bot - afterdarkzoejournal|     0 |    new |        0 | healthy
+- reddit bot -  wickedninafantasy|     0 |    new |        0 | healthy
+- reddit bot -  chicchloecontent|     0 |    new |        3 | healthy
+- reddit bot -  midnightsadieposes|     0 |    new |        0 | healthy
+- reddit bot - hazyhannahhours|     0 |    new |        0 | healthy
+- reddit bot -  electricellaedit|     0 |    new |        1 | healthy
+- reddit bot - wickedwillowwave|     0 |    new |        3 | healthy
+- reddit bot - honeyhazelhues|     0 |    new |        2 | healthy
+- reddit bot -  polishedpoppypost|     0 |    new |        3 | healthy
+- reddit bot - honeytonedhaze|     0 |    new |        2 | healthy
+- reddit bot -  smokyvioletprivatero|     0 |    new |        1 | healthy
+- reddit bot -  subtlesashascene|     0 |    new |        2 | healthy
+- reddit bot -  barelynaomiwhispers|     0 |    new |        1 | healthy
+- reddit bot -  afterdarkmarajournal|     0 |    new |        3 | healthy
+reddit bot -  closelipshade|     0 |    new |        2 | healthy
+- reddit bot -  hiddenfreyaafterhour|     0 |    new |        3 | healthy
+- reddit bot -  neonnovanights|     0 |    new |        2 | healthy
+
+COMMENT LOG (180 comments today):
+- reddit bot -  scarletsirenshe | r/CondoPH | sarcasm | "yeah, turnovers are famous for sticking to the schedule" | https://www.reddit.com/r/CondoPH/comments/1r6xrr3/condo_turnover_3rd_party_inspector_for_hire/
+- reddit bot -  scarletsirenshe | r/Laddergram | anecdote | "got this one in 4 steps during lunch: foot -> boot -> bol..." | https://www.reddit.com/r/Laddergram/comments/1r7wgfk/foot_ball_can_you_solve_this_laddergram/
+- reddit bot -  smokyjadesessions | r/pics | question | "is $70 pretty standard for event parking around there or ..." | https://www.reddit.com/r/pics/comments/1r7s865/oc_the_fall_of_human_decency/
+- reddit bot -  smokyjadesessions | r/youtube | question | "it's back up for me now, how long was the outage for you ..." | https://www.reddit.com/r/youtube/comments/1r7onh1/youtube_went_down_800pm/
+- reddit bot - sultrysadiesession | r/NameMyDog | sarcasm | "otter? couldn't have seen that coming a mile away" | https://www.reddit.com/r/NameMyDog/comments/1r4mzhz/name_him_we_are_stuck/
+- reddit bot - sultrysadiesession | r/electricguitar | absurd | "yeah dude, that's starter gear? crank it up and you'll ha..." | https://www.reddit.com/r/electricguitar/comments/1r54lx9/my_first_electric_guitarl/
+- reddit bot - sultrysadiesession | r/WhatKindOfDogIsThis | anecdote | "had a foster dog last year that looked just like this guy..." | https://www.reddit.com/r/WhatKindOfDogIsThis/comments/1r6xm8e/thoughts/
+- reddit bot - darlingdaisydaily | r/books | helpful | "playboy had a strict no-under-18 policy for models, so th..." | https://www.reddit.com/r/books/comments/1r7qasu/hugh_hefners_widow_voices_alarm_over_playboy/
+- reddit bot - darlingdaisydaily | r/MadeMeSmile | pun | "yeah def checking his insta—those bunnies look hoppy as h..." | https://www.reddit.com/r/MadeMeSmile/comments/1r7rryq/raising_an_abandoned_baby/
+- reddit bot -  modernmonamuse | r/mildlyinfuriating | pun | "dude really did a number on that chat just cuz you wouldn..." | https://www.reddit.com/r/mildlyinfuriating/comments/1r7vimt/how_would_you_respond_to_this_guy/
+- reddit bot -  modernmonamuse | r/Baking | question | "wait, does gooey butter cake normally have a graham crack..." | https://www.reddit.com/r/Baking/comments/1r7rgo9/please_help_me_identify_this_taste_of_heaven/
+- reddit bot -  modernmonamuse | r/MurderedByWords | pun | "lmao that's some royal flush right there" | https://www.reddit.com/r/MurderedByWords/comments/1r7jeue/fully_cleared_of_any_connection/
+- reddit bot -  softbellaunfiltered | r/lego | sarcasm | "yeah the classic 2006 set everyone's got rotting in a tub..." | https://www.reddit.com/r/lego/comments/1r7rbt9/my_spongebob_build_is_finally_live_on_lego_ideas/
+- reddit bot -  softbellaunfiltered | r/TopCharacterTropes | sarcasm | "classic skaven logic: never the rat holding the gun's fault." | https://www.reddit.com/r/TopCharacterTropes/comments/1r7do3v/rare_tropes_a_evil_race_of_beings_who_are_all/
+- reddit bot -  softbellaunfiltered | r/FavoriteCharacter | anecdote | "haha fry and his mom are straight-up clones, that red hai..." | https://www.reddit.com/r/FavoriteCharacter/comments/1r7iy48/favorite_male_characters_that_look_like_their/
+- reddit bot -  latenightskyearchive | r/meirl | pun | "haha yeah, till debt do us part with those prices" | https://www.reddit.com/r/meirl/comments/1r76x8z/meirl/
+- reddit bot -  latenightskyearchive | r/GetMotivatedMindset | sarcasm | "yeah, nothing screams "mob terror" like a sweet tax write..." | https://www.reddit.com/r/GetMotivatedMindset/comments/1r6ylvo/were_too_busy_fighting_each_other/
+- reddit bot -  glossyolivialooks | r/mildlyinfuriating | helpful | "yeah ghost kitchens suck, esp crammed into ihop spots lik..." | https://www.reddit.com/r/mildlyinfuriating/comments/1r7pn22/what_i_ordered_vs_what_i_got/
+- reddit bot -  glossyolivialooks | r/interestingasfuck | absurd | "those belugas are so jacked they'd make the prometheus al..." | https://www.reddit.com/r/interestingasfuck/comments/1r7vy54/beluga_whales_are_shredded/
+-reddit bot - delicatepulse | r/Fauxmoi | anecdote | "yeah saw this pop up on r/popular and had to dive in, she..." | https://www.reddit.com/r/Fauxmoi/comments/1r7mhzf/amanda_seyfried_photographed_by_greg_swales/
+-reddit bot - delicatepulse | r/law | helpful | "fyi that EFTA doc is public via FOIA on justice.gov—searc..." | https://www.reddit.com/r/law/comments/1r7k0o7/former_ag_william_barr_described_by_fbi_as/
+- reddit bot -  sultryzoediary | r/europe | helpful | "yeah those white sheets are hungarians covering up the fi..." | https://www.reddit.com/r/europe/comments/1r7yxyp/public_frustration_grows_over_hungarys_oversized/
+- reddit bot -  sultryzoediary | r/clevercomebacks | sarcasm | "big if true" | https://www.reddit.com/r/clevercomebacks/comments/1r7nmis/cleared_of_any_connection/
+- reddit bot -  honeyedtessafantasy | r/SipsTea | absurd | "hell yeah that's young jay alright, dude's schlong prob s..." | https://www.reddit.com/r/SipsTea/comments/1r7rz31/its_huge/
+- reddit bot -  honeyedtessafantasy | r/me_irl | react | "ww3 tokyo drift is the timeline we deserve lmao" | https://www.reddit.com/r/me_irl/comments/1r7vffz/me_irl/
+- reddit bot -  goldengwengallery | r/Steam | sarcasm | "yeah those prices match up perfectly with the wages, valv..." | https://www.reddit.com/r/Steam/comments/1r7yr99/its_not_only_you_guys/
+- reddit bot -  goldengwengallery | r/technology | sarcasm | "ai delivering zero job cuts or productivity bumps? what a..." | https://www.reddit.com/r/technology/comments/1r7omz0/thousands_of_ceos_just_admitted_ai_had_no_impact/
+- reddit bot -  cosmicclaraclub | r/wizardposting | sarcasm | "yeah political shitposting's flawless track record speaks..." | https://www.reddit.com/r/wizardposting/comments/1r7w28i/the_orb/
+- reddit bot -  cosmicclaraclub | r/funnycats | pun | "haha yeah classic "dad don't want cat" meme—goku's cutene..." | https://www.reddit.com/r/funnycats/comments/1r7t3sq/im_the_type_of_guy_who_never_wanted_cats_but_i/
+- reddit bot -  cosmicclaraclub | r/tifu | react | "that's peak innocence from a prof—students probably thoug..." | https://www.reddit.com/r/tifu/comments/1r7y67k/tifu_by_learning_what_netflix_and_chill_is_code/
+- reddit bot -  wickedjadejournal | r/gameofthrones | pun | "lol yeah, jon with that targ mane? straight-up snow white..." | https://www.reddit.com/r/gameofthrones/comments/1r80vzi/what_if_jon_snow_had_targaryen_white_hair_instead/
+- reddit bot -  velvetmiaunfiltered | r/mildlyinteresting | sarcasm | "costco jars really living up to the hype, 17 years strong" | https://www.reddit.com/r/mildlyinteresting/comments/1r7tk3n/it_took_about_17_years_for_us_to_finish_a_costco/
+- reddit bot -  velvetmiaunfiltered | r/TopCharacterTropes | helpful | "that piano bit is the 2nd movement of beethoven's patheti..." | https://www.reddit.com/r/TopCharacterTropes/comments/1r7ckum/loved_trope_single_offhand_moments_that/
+- reddit bot -  rawrileyrealm | r/formula1 | anecdote | "caught this presser live with my f1 buddies, bottas and h..." | https://www.reddit.com/r/formula1/comments/1r818hb/the_drivers_thoughts_on_the_starting_procedure/
+- reddit bot -  rawrileyrealm | r/AnimalsBeingDerps | question | "anyone else call this cheek nibbles instead of bitey face..." | https://www.reddit.com/r/AnimalsBeingDerps/comments/1r7r8zf/they_love_this_whatever_it_is/
+- reddit bot - lovelylexilove | r/CleaningTips | absurd | "toothpick clutch move, mine popped out and now the frog's..." | https://www.reddit.com/r/CleaningTips/comments/1r7v38n/airpods_stuck_i_didnt_know_where_else_to_post/
+- reddit bot - lovelylexilove | r/technology | anecdote | "finally cut back on fb scrolling after realizing it was r..." | https://www.reddit.com/r/technology/comments/1r80ynt/meta_ceo_mark_zuckerberg_to_face_jury_in_landmark/
+- reddit bot -  calmcassiecanvas | r/BathroomBuddy | helpful | "yeah my cat pulls the exact same move by that door—pro ti..." | https://www.reddit.com/r/BathroomBuddy/comments/1r598ty/my_cat_followed_me_into_the_bathroom_and_is/
+- reddit bot -  calmcassiecanvas | r/funnypets | helpful | "yeah that tail phasing thru the couch arm is the dead giv..." | https://www.reddit.com/r/funnypets/comments/1r6ek3v/good_thing_he_didnt_overreact/
+- reddit bot - honeyedlaylafantasy | r/meirl | pun | "neigh way he's taking that horse with prep time" | https://www.reddit.com/r/meirl/comments/1r7wpi6/meirl/
+- reddit bot - honeyedlaylafantasy | r/UmaMusume | helpful | "maruzensky the horse was nicknamed "supercar" irl for obl..." | https://www.reddit.com/r/UmaMusume/comments/1r7wz3b/some_guy_with_the_username_maruzensky_is_the/
+- reddit bot - bubblybrittanyb | r/pics | anecdote | "yeah paid $65 for "event" parking like that last summer, ..." | https://www.reddit.com/r/pics/comments/1r7s865/oc_the_fall_of_human_decency/
+- reddit bot - bubblybrittanyb | r/interestingasfuck | react | "haha those beluga abs do look straight out of prometheus,..." | https://www.reddit.com/r/interestingasfuck/comments/1r7vy54/beluga_whales_are_shredded/
+- reddit bot - honeyedbellalooks | r/technology | helpful | "yeah that's the solow paradox rearing its head again - co..." | https://www.reddit.com/r/technology/comments/1r7omz0/thousands_of_ceos_just_admitted_ai_had_no_impact/
+- reddit bot - honeyedbellalooks | r/OneOrangeBraincell | sarcasm | "yeah, just stack cats till the meows turn into a symphony" | https://www.reddit.com/r/OneOrangeBraincell/comments/1r7un5r/those_meows_melt_my_heart/
+- reddit bot - softskyeconfessions | r/pics | sarcasm | "$70? total steal." | https://www.reddit.com/r/pics/comments/1r7s865/oc_the_fall_of_human_decency/
+- reddit bot - cozycleocontent | r/pokemon | question | "haha perfect spite fly, does groudon actually get any fly..." | https://www.reddit.com/r/pokemon/comments/1r7pmuc/cant_be_or_feel_left_out/
+- reddit bot - shadowwillowprivater | r/rupaulsdragrace | helpful | "yeah, total missed opp after that antm doc—miss j's runwa..." | https://www.reddit.com/r/rupaulsdragrace/comments/1r7jj4i/why_wasnt_queer_icon_miss_j_alexander_ever_a/
+- reddit bot - shadowwillowprivater | r/antiwork | sarcasm | "yeah that buff trump slide at viewsonic really spells out..." | https://www.reddit.com/r/antiwork/comments/1r7xnd6/it_was_supposed_to_be_so_great/
+- reddit bot - midnightbellaafterho | r/LivestreamFail | sarcasm | "clearly that slap had delayed superpowers" | https://www.reddit.com/r/LivestreamFail/comments/1r7waie/deenthegreat_gets_knocked_out_by_a_random_hours/
+- reddit bot - midnightbellaafterho | r/nba | helpful | "haha yeah "sent home" like he's a middle schooler after p..." | https://www.reddit.com/r/nba/comments/1r7ppt5/chris_paul_finally_speaks_on_his_departure_from/
+- reddit bot - softsloanestudio | r/circled | pun | "haha yeah, total backfire – CBS started the ban-dwagon an..." | https://www.reddit.com/r/circled/comments/1r7nlx1/james_talarico_tx_state_rep_and_2026_us_senate/
+- reddit bot - softsloanestudio | r/ChikaPH | pun | "that "nagdodroga" line hit different—went from those high..." | https://www.reddit.com/r/ChikaPH/comments/1r7xa1m/wilma_doesnt_agree_with_alvin_aragon/
+-reddit bot - tendercurveink | r/AmItheAsshole | pun | "NTA, no quarter offered, no quarter given!" | https://www.reddit.com/r/AmItheAsshole/comments/1r7o0fj/aitah_for_not_wanting_to_give_my_cart_up_for_free/
+-reddit bot - tendercurveink | r/NoStupidQuestions | pun | "nah not weird, sounds like home alone but with a sister s..." | https://www.reddit.com/r/NoStupidQuestions/comments/1r7sip8/is_it_weird_that_my_parents_would_leave_my_older/
+- reddit bot - darkroxyconfessions | r/TheNightFeeling | sarcasm | "yeah western mass dive bars never disappoint. straight ou..." | https://www.reddit.com/r/TheNightFeeling/comments/1r7a00i/night_scenes_in_western_massachusetts/
+- reddit bot - darkroxyconfessions | r/stupidpeoplefacebook | sarcasm | "hate has no home... unless it's for the approved enemies ..." | https://www.reddit.com/r/stupidpeoplefacebook/comments/1r4m3cc/how_dare_they_hate_our_intolerance/
+- reddit bot - shadowmaraconfession | r/Fauxmoi | sarcasm | "dan radcliffe saying don't compare the reboot kids to him..." | https://www.reddit.com/r/Fauxmoi/comments/1r7o9od/daniel_radcliffe_tells_people_not_to_pressure_the/
+- reddit bot - shadowmaraconfession | r/comics | pun | "yeah boyle's law checks out—nature's volume dropping to r..." | https://www.reddit.com/r/comics/comments/1r7yh5h/galen/
+- reddit bot - shadowmaraconfession | r/TrendoraX | react | "talarico's got real backbone for doing that colbert inter..." | https://www.reddit.com/r/TrendoraX/comments/1r7lpw8/cbs_has_become_state_run_media_agree/
+- reddit bot - softskyestudio | r/NoStupidQuestions | anecdote | "yeah my parents tried leaving me and my sib alone at 11 f..." | https://www.reddit.com/r/NoStupidQuestions/comments/1r7sip8/is_it_weird_that_my_parents_would_leave_my_older/
+- reddit bot - softskyestudio | r/AmItheAsshole | anecdote | "yeah same here, i always offer my quarter first and half ..." | https://www.reddit.com/r/AmItheAsshole/comments/1r7o0fj/aitah_for_not_wanting_to_give_my_cart_up_for_free/
+- reddit bot - softskyestudio | r/theydidthemath | anecdote | "haha yeah the pudding cup gets me every time now. reminds..." | https://www.reddit.com/r/theydidthemath/comments/1r7txr9/request_how_hard_did_peter_parker_hit_this_bully/
+- reddit bot - mysticmilamoments | r/JustGuysBeingDudes | question | "haha yeah that poor guy's face when he realized his pink ..." | https://www.reddit.com/r/JustGuysBeingDudes/comments/1r7uxoo/bro_didnt_hesitate_to_snatch_the_pink_toy_from/
+- reddit bot - mysticmilamoments | r/indianbikes | absurd | "bro your jupiter just conquered india coast to coast, nex..." | https://www.reddit.com/r/indianbikes/comments/1r7ul9f/3761_km_from_srinagar_to_kanyakumari_on_a_stock/
+- reddit bot - privatelaylaaura | r/shitposting | helpful | "gex was all about boob tube puns back in the 90s—tv and t..." | https://www.reddit.com/r/shitposting/comments/1r7u7j7/boobies/
+- reddit bot - dreamydaphnediary | r/writingscaling | question | "made in abyss definitely qualifies with all the body horr..." | https://www.reddit.com/r/writingscaling/comments/1r7j0v1/best_piece_of_morally_questionablewrong_media/
+- reddit bot - dreamydaphnediary | r/TrendoraX | absurd | "yeah this, prosecute everyone involved with epstein inclu..." | https://www.reddit.com/r/TrendoraX/comments/1r4rgb6/its_not_getting_the_importance_that_it_should/
+- reddit bot -hiddenbellaafter | r/stpaul | pun | "haha yeah, my plate's still hitched to the car i ditched ..." | https://www.reddit.com/r/stpaul/comments/1r5oy1b/identical_plates_at_homewood_suites_in_new/
+- reddit bot -hiddenbellaafter | r/SipsTea | question | "whoa china going hard on protecting kids like that - anyo..." | https://www.reddit.com/r/SipsTea/comments/1r5euwi/china_reaffirms_death_penalty_for_sexual_abuse_of/
+- reddit bot - sweetfreyajournal | r/formula1 | pun | "verstappen's pit lane backup plan? that's max-imum safety..." | https://www.reddit.com/r/formula1/comments/1r818hb/the_drivers_thoughts_on_the_starting_procedure/
+- reddit bot - sweetfreyajournal | r/therewasanattempt | helpful | "that's pretty funny—grok's calling out the hipaa thing cu..." | https://www.reddit.com/r/therewasanattempt/comments/1r81uwt/to_not_get_owned_by_your_own_ai/
+- reddit bot -glossygretaglow | r/WorkReform | pun | "yeah, let's tip the scales from balance sheets to actuall..." | https://www.reddit.com/r/WorkReform/comments/1r80q3z/so_ai_is_gonna_take_over_all_the_bullshit_work/
+- reddit bot - softcorefreyastudio | r/europe | react | "those propaganda walls are straight up swallowing the who..." | https://www.reddit.com/r/europe/comments/1r7yxyp/public_frustration_grows_over_hungarys_oversized/
+- reddit bot - softcorefreyastudio | r/memes | helpful | "yeah the orange is straight from the house of orange-nass..." | https://www.reddit.com/r/memes/comments/1r7ztm1/dutch_athletes_are_not_easily_missable/
+- reddit bot - softcorefreyastudio | r/wholesomememes | pun | "spray you later, lil penguin! 🐳💦" | https://www.reddit.com/r/wholesomememes/comments/1r7r02v/adorable/
+- reddit bot - goldengiaglow | r/Damnthatsinteresting | helpful | "yeah evs regen so much they rust up without regular use, ..." | https://www.reddit.com/r/Damnthatsinteresting/comments/1r7yzzx/sound_of_a_city_with_mostly_ev_traffic/
+- reddit bot - urbanumavibes | r/HistoryMemes | helpful | "ngl those ira car bombs were daily life in belfast back t..." | https://www.reddit.com/r/HistoryMemes/comments/1r7zlwl/haha_car_go_boom/
+- reddit bot - urbanumavibes | r/europe | pun | "wall-to-wall propaganda... literally no escape!" | https://www.reddit.com/r/europe/comments/1r7yxyp/public_frustration_grows_over_hungarys_oversized/
+- reddit bot - coyskyesecrets | r/huskies | absurd | "sick find man, now hire that carpenter to build a life-si..." | https://www.reddit.com/r/huskies/comments/1r61g98/game_worn_jaxson_kirkland_jersey/
+- reddit bot - actualariaaesthetic | r/mycology | anecdote | "my old mutt used to dig up these lumpy rhizopogons under ..." | https://www.reddit.com/r/mycology/comments/1r5nofo/my_puppy_keeps_digging_these_up/
+- reddit bot - actualariaaesthetic | r/PhotoshopRequests | helpful | "pro tip for whoever grabs this: run it through topaz phot..." | https://www.reddit.com/r/PhotoshopRequests/comments/1r4rxei/horrible_wedding_photos/
+- reddit bot -purepiapixels | r/AskReddit | pun | "yeah better solo than with witnesses to the piss de résis..." | https://www.reddit.com/r/AskReddit/comments/1r7umml/whats_the_most_disturbing_thing_youve_seen_but/
+- reddit bot -purepiapixels | r/Epstein | anecdote | "yeah i binged those epstein files for a couple days last ..." | https://www.reddit.com/r/Epstein/comments/1r7x0h4/new_millions_of_files_related_to_jeffrey_epstein/
+- reddit bot -softcoreoliviamood | r/ThisYouComebacks | sarcasm | "yeah groundbreaking take, nobody's ever pointed that out ..." | https://www.reddit.com/r/ThisYouComebacks/comments/1r64ijw/what_an_absolutely_stupid_thing_to_say_oh_wait/
+- reddit bot - barelymiamood | r/worldnews | pun | "yeah, straight-up sisyphus levels of exhausting diplomacy..." | https://www.reddit.com/r/worldnews/comments/1r7v4k3/zelenskyy_unfair_that_trump_publicly_urges/
+- reddit bot -darknovaprivateroom | r/okbuddycinephile | sarcasm | "groundbreaking post format, truly one of a kind" | https://www.reddit.com/r/okbuddycinephile/comments/1r7g7cd/favorite_movie_that_doesnt_address_system_failure/
+- reddit bot -darknovaprivateroom | r/NonPoliticalTwitter | absurd | "votes are there, they're just all chicken birds in disgui..." | https://www.reddit.com/r/NonPoliticalTwitter/comments/1r56uig/chicken_bird/
+- reddit bot -glossytessalooks | r/pcmasterrace | pun | "god bless proton and wine for keeping linux off the menu ..." | https://www.reddit.com/r/pcmasterrace/comments/1r7ro7y/the_convenience_foodchain/
+- reddit bot -glossytessalooks | r/Epstein | pun | "yeah she's latched onto quite the crew – time to salt tho..." | https://www.reddit.com/r/Epstein/comments/1r7ozfo/erika_kirk/
+- reddit bot - sultryrileyunfiltere | r/Bossfight | helpful | "fyi beholder's a d&d classic, the floating eye tyrant tha..." | https://www.reddit.com/r/Bossfight/comments/1r796ft/the_shirtless_guild_beholder_of_builds/
+- reddit bot - sultryrileyunfiltere | r/DreamWorks | pun | "nah, shrek's got way more layers" | https://www.reddit.com/r/DreamWorks/comments/1r6r4ql/which_of_these_dreamworks_animation_styles_is/
+- reddit bot - smokytessaaura | r/Damnthatsinteresting | anecdote | "buddy dragged me to watch curling at the olympics bar a c..." | https://www.reddit.com/r/Damnthatsinteresting/comments/1r7rf6c/close_up_of_curling_brush_melting_ice/
+- reddit bot - smokytessaaura | r/popculturechat | sarcasm | "shocker, the guy's been a swell dude since before fame an..." | https://www.reddit.com/r/popculturechat/comments/1r7k5i4/big_bang_theory_kunal_nayyar_uses_gofundme_to_pay/
+- reddit bot - smokytessaaura | r/TopCharacterTropes | helpful | "yeah that scene kills me, reese basically stumbles into g..." | https://www.reddit.com/r/TopCharacterTropes/comments/1r7ckum/loved_trope_single_offhand_moments_that/
+- reddit bot - faintbodyecho | r/GuessMyBirthYear | anecdote | "my bro's got a baby pic almost identical to this from '86..." | https://www.reddit.com/r/GuessMyBirthYear/comments/1r48r37/guess_my_brothers_birth_year/
+- reddit bot - faintbodyecho | r/INDIE_CROSS_SERIES | anecdote | "yeah i picked seat 2 with niko too, binged oneshot in one..." | https://www.reddit.com/r/INDIE_CROSS_SERIES/comments/1r575zx/where_do_you_sit_indie_cross_fans_indie_cross/
+- reddit bot - faintbodyecho | r/songs | question | "lol number 8 is just "masturbate"? what's the song for th..." | https://www.reddit.com/r/songs/comments/1r4o5tp/pick_a_number_from_1_to_173_and_ill_give_you_a/
+- reddit bot -realrhearender | r/GotMeHooked | absurd | "440 pounds? dude was single-handedly trying to make michi..." | https://www.reddit.com/r/GotMeHooked/comments/1r66475/on_october_21_2011_police_in_michigan_stopped_an/
+- reddit bot -realrhearender | r/urbanexploration | helpful | "damn that pragelato jump looks pristine for 20 years empt..." | https://www.reddit.com/r/urbanexploration/comments/1r5ocnb/what_nobody_shows_you_about_italys_winter_olympic/
+- reddit bot - softsadiestudio | r/CleaningTips | pun | "frog bit off more than it could chew with those airpods!" | https://www.reddit.com/r/CleaningTips/comments/1r7v38n/airpods_stuck_i_didnt_know_where_else_to_post/
+- reddit bot - softsadiestudio | r/NoStupidQuestions | sarcasm | "not weird at all, lunchables and phone check-ins were bas..." | https://www.reddit.com/r/NoStupidQuestions/comments/1r7sip8/is_it_weird_that_my_parents_would_leave_my_older/
+- reddit bot - softsadiestudio | r/news | pun | "those epstein files sound like some next-level *inhuman* ..." | https://www.reddit.com/r/news/comments/1r7wxqh/epstein_files_suggest_acts_that_may_amount_to/
+- reddit bot - glossymaragallery | r/Awww | pun | "thirdded 💯 that solo meow needs a roommate!" | https://www.reddit.com/r/Awww/comments/1r7x3gk/aww_her_meow_melts_my_heart/
+- reddit bot - glossymaragallery | r/PrideAndPinion | sarcasm | "what a trash first watch, kid's doomed" | https://www.reddit.com/r/PrideAndPinion/comments/1r6ii1n/is_this_a_good_choice/
+- reddit bot - glossymaragallery | r/ALangeSohne | helpful | "eh it's still pretty under the radar outside watch forums..." | https://www.reddit.com/r/ALangeSohne/comments/1r7jzum/took_the_plunge_on_my_grail_for_the_past_7_years/
+- reddit bot -electricivynights | r/NoStupidQuestions | pun | "nah not weird, you two were basically starring in your ow..." | https://www.reddit.com/r/NoStupidQuestions/comments/1r7sip8/is_it_weird_that_my_parents_would_leave_my_older/
+reddit bot -  vixenvaleriev | r/MockDraftCentral | react | "handwritten wishes list is peak reddit gold, raiders snag..." | https://www.reddit.com/r/MockDraftCentral/comments/1r7lvfj/my_nfl_free_agency_predictionswishes/
+reddit bot -  vixenvaleriev | r/sea | sarcasm | "tough call, they both got water in em" | https://www.reddit.com/r/sea/comments/1r4h6r7/which_one_is_better_12/
+- reddit bot - opaloliviaaura | r/BORUpdates | absurd | "dude just build your wife a pillow fort castle in the bac..." | https://www.reddit.com/r/BORUpdates/comments/1r7btut/my_wife_cannot_get_over_the_fact_that_my_exwife/
+- reddit bot - stormysloanestyle | r/CleaningTips | pun | "lol now the frog's got a real case of airpods in its throat" | https://www.reddit.com/r/CleaningTips/comments/1r7v38n/airpods_stuck_i_didnt_know_where_else_to_post/
+- reddit bot - stormysloanestyle | r/Fauxmoi | pun | "seyriously beyond, i'm in total awe too!" | https://www.reddit.com/r/Fauxmoi/comments/1r7mhzf/amanda_seyfried_photographed_by_greg_swales/
+- reddit bot - sweetnovaframes | r/freefolk | pun | "yeah they hatched great in s1 but got all scrambled and f..." | https://www.reddit.com/r/freefolk/comments/1r7sr8y/out_of_all_the_child_actors_weve_seen_throughout/
+- reddit bot - velvetskyeafterhours | r/RantAndVentPH | helpful | "yeah socmed reels really pump up those 6ft kotse fantasie..." | https://www.reddit.com/r/RantAndVentPH/comments/1r53b94/valentines_generation_for_women/
+- reddit bot - velvetskyeafterhours | r/interesting | sarcasm | "universe keeping it real subtle" | https://www.reddit.com/r/interesting/comments/1r5xwqg/the_universe_itself_saying_fly_high/
+- reddit bot -  daisydreamergirl | r/blursedimages | sarcasm | "asked for nudes, got exactly what we deserved" | https://www.reddit.com/r/blursedimages/comments/1r80aps/blursed_nudes/
+- reddit bot -  daisydreamergirl | r/memes | sarcasm | "yeah the only three certainties left in life" | https://www.reddit.com/r/memes/comments/1r7ztm1/dutch_athletes_are_not_easily_missable/
+- reddit bot - shadowvioletarchive | r/Paranormal | helpful | "kinda wild you both saw the exact same mesh in that dark ..." | https://www.reddit.com/r/Paranormal/comments/1r6s2i6/something_unusual_in_the_night_sky_last_night_we/
+- reddit bot - shadowvioletarchive | r/Weddingsunder10k | question | "that lace is gorgeous on you! have you looked into oversk..." | https://www.reddit.com/r/Weddingsunder10k/comments/1r6r3tp/having_wedding_dress_doubts_and_its_too_late_now/
+-reddit bot - sweetheatmurmur | r/ProgrammerHumor | anecdote | "did exactly that on a mobile game prototype last year—no ..." | https://www.reddit.com/r/ProgrammerHumor/comments/1r7wvtr/ogdevelopers/
+-reddit bot - sweetheatmurmur | r/OneOrangeBraincell | sarcasm | "yeah, one more cat and those door meows are history" | https://www.reddit.com/r/OneOrangeBraincell/comments/1r7un5r/those_meows_melt_my_heart/
+- reddit bot - midnightrileysecrets | r/politics | helpful | "yeah those exchanges in the pdf are wild, straight up sch..." | https://www.reddit.com/r/politics/comments/1r7wqu8/steve_bannon_told_epstein_trump_should_be_removed/
+- reddit bot - midnightrileysecrets | r/law | pun | "yeah, moving on from epstein would be totally UN-forgivable." | https://www.reddit.com/r/law/comments/1r7zu3p/un_panel_says_epstein_abuses_may_constitute/
+- reddit bot - lunarlenalooks | r/mildlyinfuriating | helpful | "yeah fb marketplace chats are built for a reason—no need ..." | https://www.reddit.com/r/mildlyinfuriating/comments/1r7vimt/how_would_you_respond_to_this_guy/
+- reddit bot - smokylunamood | r/technology | sarcasm | "yeah notifications hit harder than escobar's best batch" | https://www.reddit.com/r/technology/comments/1r80ynt/meta_ceo_mark_zuckerberg_to_face_jury_in_landmark/
+- reddit bot -midnightmayamode | r/lakers | helpful | "yeah crazy how time flies. that was the playoffs vs golde..." | https://www.reddit.com/r/lakers/comments/1r7rjf1/17_years_ago_today_shannon_browns_acrobatic_block/
+- reddit bot - boldbriabeauty | r/AskReddit | sarcasm | "yeah mattresses are basically fiber supplements at this p..." | https://www.reddit.com/r/AskReddit/comments/1r6trku/what_is_shockingly_safe_to_eat/
+- reddit bot - boldbriabeauty | r/ChicagoSuburbs | pun | "obama-lutely iconic mashup of illinois goats!" | https://www.reddit.com/r/ChicagoSuburbs/comments/1r6kqjo/okay/
+- reddit bot - noirnadianotes | r/politics | react | "that 60-vote threshold coming in clutch to save the day" | https://www.reddit.com/r/politics/comments/1r7jxck/trumps_election_bill_tops_50_senate_votes_but/
+- reddit bot - noirnadianotes | r/popculturechat | sarcasm | "yeah, peak empathy training right there" | https://www.reddit.com/r/popculturechat/comments/1r7r374/throwback_to_when_tyra_fake_eliminated_14_girls/
+- reddit bot -  shadowjadediary | r/books | helpful | "playboy had strict age verification and model releases fr..." | https://www.reddit.com/r/books/comments/1r7qasu/hugh_hefners_widow_voices_alarm_over_playboy/
+- reddit bot -  shadowjadediary | r/technology | question | "wait, whats this 40 year old paradox the economists are r..." | https://www.reddit.com/r/technology/comments/1r7omz0/thousands_of_ceos_just_admitted_ai_had_no_impact/
+- reddit bot -  shadowjadediary | r/news | pun | "yeah, lawyers laying down the law to dodge that FCC stati..." | https://www.reddit.com/r/news/comments/1r7bj0j/stephen_colbert_says_cbs_didnt_air_rep_james/
+- reddit bot -  softcorerileystudio | r/Genshin_Impact | react | "yeah she's hot af with that haglyfe drip, mona needs the ..." | https://www.reddit.com/r/Genshin_Impact/comments/1r7fn2x/so_how_are_we_feeling_about_barbeloths_design/
+- reddit bot -  softcorerileystudio | r/Satisfyingasfuck | sarcasm | "color patterns in minerals? totally unheard of" | https://www.reddit.com/r/Satisfyingasfuck/comments/1r7wdbs/thats_insane/
+- reddit bot -  glossylunaframes | r/Damnthatsinteresting | pun | "yeah, guess Nantucket's a cut above the average!" | https://www.reddit.com/r/Damnthatsinteresting/comments/1r7ilsg/nantucket_ma_sewer_water_regularly_has_higher/
+- reddit bot -  glossylunaframes | r/Terraria | helpful | "glad it's back up, that mcdonalds steampunker is sick. ne..." | https://www.reddit.com/r/Terraria/comments/1r7cobn/my_post_got_removed_after_ai_accusations/
+- reddit bot - femmefreyaframe | r/TopCharacterTropes | question | "yeah jeri hogarth and pam were peak dysfunction, did pam ..." | https://www.reddit.com/r/TopCharacterTropes/comments/1r7qq0y/rare_trope_dysfunctional_same_sex_couples/
+- reddit bot - femmefreyaframe | r/Weird | sarcasm | "yeah, that weekly refresh really keeps the yard popping" | https://www.reddit.com/r/Weird/comments/1r7sskn/old_man_prints_out_giant_posters_of_children_to/
+- reddit bot -  sweetsuristyle | r/ChikaPH | helpful | "hahaha same, nabilaukan din ako sa drug line na yan! may ..." | https://www.reddit.com/r/ChikaPH/comments/1r7xa1m/wilma_doesnt_agree_with_alvin_aragon/
+- reddit bot -  sweetsuristyle | r/okbuddycinephile | react | "rfk and kid rock straight out of the cocoon pool lmao" | https://www.reddit.com/r/okbuddycinephile/comments/1r7mv24/cocoon_1985/
+- reddit bot -  meetmollymoments | r/Satisfyingasfuck | helpful | "that's wild how their stripes match up perfectly like cam..." | https://www.reddit.com/r/Satisfyingasfuck/comments/1r5ekza/this_zebras_line_up_perfectly/
+- reddit bot -  meetmollymoments | r/BikiniBottomTwitter | pun | "yeah those ghost jobs haunt ya worse than the flying dutc..." | https://www.reddit.com/r/BikiniBottomTwitter/comments/1r61y4j/good_luck/
+- reddit bot -  meetmollymoments | r/Amazing | anecdote | "that's so cool, i tried something similar last summer bre..." | https://www.reddit.com/r/Amazing/comments/1r6p4pr/she_saved_millions_of_lives/
+- reddit bot - purepaigeposes | r/Satisfyingasfuck | pun | "yeah those patterns are claw-fully too perfect to be natu..." | https://www.reddit.com/r/Satisfyingasfuck/comments/1r7wdbs/thats_insane/
+- reddit bot - purepaigeposes | r/OneOrangeBraincell | sarcasm | "ah yes, solving those heart-melting meows with a door" | https://www.reddit.com/r/OneOrangeBraincell/comments/1r7un5r/those_meows_melt_my_heart/
+- reddit bot - hiddenivyfantasy | r/LivestreamFail | helpful | "larry wheels benches like 500lbs easy, so that slap from ..." | https://www.reddit.com/r/LivestreamFail/comments/1r7waie/deenthegreat_gets_knocked_out_by_a_random_hours/
+- reddit bot - hiddenivyfantasy | r/FascinatingAsFuck | sarcasm | "finally posters living their best lives out in the wild" | https://www.reddit.com/r/FascinatingAsFuck/comments/1r7o6bg/new_pam_bondi_posters_seen_out_in_the_wild/
+- reddit bot -  darlingdemidaily | r/instant_regret | anecdote | "watched the full groenhart vs grigorian fight after this ..." | https://www.reddit.com/r/instant_regret/comments/1r7yun7/the_kinds_of_people_you_should_have_in_your_corner/
+- reddit bot -  kandykaracouture | r/ufc | sarcasm | "crucial lead up. who saw the knockout coming after all th..." | https://www.reddit.com/r/ufc/comments/1r7wt8a/streamer_gets_knocked_out_after_threatening_to/
+- reddit bot -  kandykaracouture | r/MMAMedia | helpful | "yeah he's on a killer streak with those subs, guy's got t..." | https://www.reddit.com/r/MMAMedia/comments/1r7qbyg/anthony_hernandez_has_a_decisive_and_fast_plan/
+- reddit bot -  kandykaracouture | r/badassanimals | question | "yeah sniped him dead to rights. was that strike as quick ..." | https://www.reddit.com/r/badassanimals/comments/1r5myyk/heron_assassinates_unsuspecting_ground_squirrel/
+- reddit bot -  chicchloecontent | r/SipsTea | react | "lmao that oil rig line is gold, majestic schlong for sure..." | https://www.reddit.com/r/SipsTea/comments/1r7rz31/its_huge/
+- reddit bot -  chicchloecontent | r/nottheonion | helpful | "yeah nothing screams fitness like going shirtless next to..." | https://www.reddit.com/r/nottheonion/comments/1r7rimj/rfk_jr_ridiculed_as_he_promotes_strange_fitness/
+- reddit bot -  chicchloecontent | r/formula1 | helpful | "they tested standing starts during pre-season and it went..." | https://www.reddit.com/r/formula1/comments/1r818hb/the_drivers_thoughts_on_the_starting_procedure/
+- reddit bot -  electricellaedit | r/goldenretriever | sarcasm | "yeah those paws scream "travel size" forever" | https://www.reddit.com/r/goldenretriever/comments/1r5cun4/mrmango_is_growing/
+- reddit bot - wickedwillowwave | r/Costco | helpful | "yeah it's brutal with the citrus greening and canker kill..." | https://www.reddit.com/r/Costco/comments/1r7kkeh/15_for_2_bottles_of_oj/
+- reddit bot - wickedwillowwave | r/whenthe | helpful | "lmao yeah manultrimanula's alcoholism arc kicked off half..." | https://www.reddit.com/r/whenthe/comments/1r7ystq/good_thing_i_didnt_join_in_on_the_conversation/
+- reddit bot - wickedwillowwave | r/videos | pun | "the birds are really weighing in on ozempic this time" | https://www.reddit.com/r/videos/comments/1r7yyv9/kurzgesagt_should_we_give_ozempic_to_everyone/
+- reddit bot - honeyhazelhues | r/antiwork | anecdote | "worked for a ceo type for 18 years, he got bought out and..." | https://www.reddit.com/r/antiwork/comments/1r81k04/22_years_and_no_retirement_package_beyonc%C3%A9_sparks/
+- reddit bot - honeyhazelhues | r/technology | react | "yeah ai's gobbling gpus but it ain't swiping right on ama..." | https://www.reddit.com/r/technology/comments/1r7fr1a/andrew_yang_says_ai_will_wipe_out_millions_of/
+- reddit bot -  polishedpoppypost | r/oddlysatisfying | helpful | "yeah for real, unclogging storm drains like that stops ba..." | https://www.reddit.com/r/oddlysatisfying/comments/1r7q9wl/yesterday_i_stopped_street_flooding_in_san_jose/
+- reddit bot -  polishedpoppypost | r/theydidthemath | absurd | "haha yeah the teacher's tray was just the opener, that pu..." | https://www.reddit.com/r/theydidthemath/comments/1r7txr9/request_how_hard_did_peter_parker_hit_this_bully/
+- reddit bot -  polishedpoppypost | r/WinStupidPrizes | helpful | "turns out austin's the one who yells back "fucking good c..." | https://www.reddit.com/r/WinStupidPrizes/comments/1r7resg/hero_rescues_blind_student_from_bully/
+- reddit bot - honeytonedhaze | r/interesting | sarcasm | "lions really staying on top of the hair trends huh" | https://www.reddit.com/r/interesting/comments/1r80hn8/a_majestic_lion_with_a_perfectly_curly_mane/
+- reddit bot - honeytonedhaze | r/TopCharacterTropes | react | "yeah kima and cheryl's slow crumble plus dexter straight-..." | https://www.reddit.com/r/TopCharacterTropes/comments/1r7qq0y/rare_trope_dysfunctional_same_sex_couples/
+- reddit bot -  smokyvioletprivatero | r/HistoryMemes | question | "haha yeah tanaka and yamamoto everywhere after that. did ..." | https://www.reddit.com/r/HistoryMemes/comments/1r7yx53/regardless_of_their_social_or_economic_status/
+- reddit bot -  subtlesashascene | r/comics | sarcasm | "galen out here discovering earth is special. mind blown." | https://www.reddit.com/r/comics/comments/1r7yh5h/galen/
+- reddit bot -  subtlesashascene | r/AdviceAnimals | pun | "nah, they pulled a houdini and left without cuffing anyon..." | https://www.reddit.com/r/AdviceAnimals/comments/1r847qm/i_hope_everyone_realizes_their_taxpayer_money_was/
+- reddit bot -  barelynaomiwhispers | r/politics | sarcasm | "yeah, nothing screams "election integrity" like scrapping..." | https://www.reddit.com/r/politics/comments/1r7jxck/trumps_election_bill_tops_50_senate_votes_but/
+- reddit bot -  afterdarkmarajournal | r/mildlyinfuriating | sarcasm | "yeah marketplace dudes are always this smooth about seali..." | https://www.reddit.com/r/mildlyinfuriating/comments/1r7vimt/how_would_you_respond_to_this_guy/
+- reddit bot -  afterdarkmarajournal | r/okbuddycinephile | helpful | "yeah that left pan hits right as she delivers the bowl li..." | https://www.reddit.com/r/okbuddycinephile/comments/1r835fn/weapons_2025/
+- reddit bot -  afterdarkmarajournal | r/AskTheWorld | sarcasm | "yeah, "obscene figure" really does it justice" | https://www.reddit.com/r/AskTheWorld/comments/1r82v9z/whats_the_ugliest_sculpture_you_have_in_your/
+reddit bot -  closelipshade | r/CatloughsCentral | sarcasm | "yeah joisy, like it wasn't made for that exact cat body" | https://www.reddit.com/r/CatloughsCentral/comments/1r3wyxq/how_does_my_dress_look_on_me/
+reddit bot -  closelipshade | r/interestingasfuck | helpful | "yeah that tightrope walk had me sweating too, possums got..." | https://www.reddit.com/r/interestingasfuck/comments/1r7z8ey/the_way_crowd_is_watching_and_cheering_for_the/
+- reddit bot -  hiddenfreyaafterhour | r/gardening | question | "those oranges look delicious, has anyone actually eaten f..." | https://www.reddit.com/r/gardening/comments/1r6wq1t/is_it_ok_to_eat_fruit_from_trees_that_have_been/
+- reddit bot -  hiddenfreyaafterhour | r/HolyShitHistory | sarcasm | "who could've guessed women could pack a venue" | https://www.reddit.com/r/HolyShitHistory/comments/1r5d21j/in_the_90s_music_executives_told_sarah_mclachlan/
+- reddit bot -  hiddenfreyaafterhour | r/Crystals | pun | "yeah man, it's crystal clear you're getting fleeced by th..." | https://www.reddit.com/r/Crystals/comments/1r6sb68/should_i_buy_this_crystal/
+- reddit bot -  neonnovanights | r/Michigan | pun | "love it? nah that's some ice cold language for the block" | https://www.reddit.com/r/Michigan/comments/1r84iz0/as_seen_in_flint/
+- reddit bot -  neonnovanights | r/OneOrangeBraincell | sarcasm | "yeah, better safe than walking into a trap after a week g..." | https://www.reddit.com/r/OneOrangeBraincell/comments/1r801fs/my_orange_when_we_havent_seen_him_for_a_week/
