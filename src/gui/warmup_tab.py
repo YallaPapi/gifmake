@@ -40,8 +40,11 @@ os.makedirs(_LOG_DIR, exist_ok=True)
 _file_handler = logging.handlers.RotatingFileHandler(
     os.path.join(_LOG_DIR, "warmup.log"),
     maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+_file_handler.setLevel(logging.INFO)
 _file_handler.setFormatter(logging.Formatter(
     "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+logger.setLevel(logging.INFO)
+logging.getLogger("core.account_warmer").setLevel(logging.INFO)
 logging.getLogger("core.account_warmer").addHandler(_file_handler)
 logger.addHandler(_file_handler)
 
@@ -84,6 +87,74 @@ def _setup_log_tags(textbox):
     }
     for tag, opts in tags.items():
         textbox._textbox.tag_config(tag, **opts)
+
+
+def _warmup_stats_ok(stats):
+    """True only when warmup produced a usable session (not a startup/feed failure)."""
+    if not isinstance(stats, dict):
+        return False
+    if stats.get("ok") is False:
+        return False
+    # Match core.account_warmer.warmup_stats_ok semantics: require real activity.
+    for key in ("scrolls", "posts_clicked", "comments", "joins",
+                "upvotes", "downvotes", "subs_browsed"):
+        try:
+            if int(stats.get(key, 0) or 0) > 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _warmup_failure_text(stats):
+    if not isinstance(stats, dict):
+        return "warmup failed"
+    reason = (stats.get("failure_reason") or "warmup failed").replace("_", " ")
+    detail = (stats.get("failure_detail") or "").strip()
+    return f"{reason}: {detail}" if detail else reason
+
+
+def _warmup_fail_stats(reason, detail=""):
+    return {
+        "ok": False,
+        "failure_reason": str(reason or "warmup_failed"),
+        "failure_detail": str(detail or "").strip(),
+    }
+
+
+def _adspower_cdp_endpoint(payload):
+    """Validate AdsPower browser/start payload shape and extract CDP endpoint."""
+    if not isinstance(payload, dict):
+        return "", "adspower_bad_response", (
+            f"browser/start returned non-dict JSON ({type(payload).__name__})")
+
+    data_node = payload.get("data")
+    if data_node is None:
+        data_node = {}
+    elif not isinstance(data_node, dict):
+        return "", "adspower_bad_response", (
+            "AdsPower browser/start payload field 'data' is not an object")
+
+    ws_node = data_node.get("ws")
+    if ws_node is None:
+        ws_node = {}
+    elif not isinstance(ws_node, dict):
+        return "", "adspower_bad_response", (
+            "AdsPower browser/start payload field 'data.ws' is not an object")
+
+    endpoint = ws_node.get("puppeteer")
+    if endpoint is None or endpoint == "":
+        return "", "adspower_missing_cdp", (
+            "AdsPower browser/start succeeded but no CDP endpoint was returned")
+    if not isinstance(endpoint, str):
+        return "", "adspower_bad_response", (
+            "AdsPower browser/start payload field 'data.ws.puppeteer' is not a string")
+
+    endpoint = endpoint.strip()
+    if not endpoint:
+        return "", "adspower_missing_cdp", (
+            "AdsPower browser/start succeeded but no CDP endpoint was returned")
+    return endpoint, None, ""
 
 ADSPOWER_CONFIG_PATH = os.path.join(
     os.path.dirname(__file__), "..", "uploaders", "redgifs", "adspower_config.json"
@@ -1787,20 +1858,49 @@ class WarmupTab:
                 f"?user_id={profile_id}&api_key={api_key}",
                 timeout=60,
             )
-            data = resp.json()
+            try:
+                data = resp.json()
+            except Exception as e:
+                stats = _warmup_fail_stats(
+                    "adspower_bad_response",
+                    f"browser/start returned invalid JSON ({e})",
+                )
+                self.app.after(0, self._log,
+                               f"AdsPower error: invalid JSON response: {e}")
+                return
+            if not isinstance(data, dict):
+                stats = _warmup_fail_stats(
+                    "adspower_bad_response",
+                    f"browser/start returned non-dict JSON ({type(data).__name__})",
+                )
+                self.app.after(0, self._log,
+                               f"AdsPower error: unexpected response payload: {data!r}")
+                return
             if data.get("code") != 0:
+                stats = _warmup_fail_stats("adspower_start_failed", str(data))
                 self.app.after(0, self._log, f"AdsPower error: {data}")
                 return
-            ws_endpoint = data.get("data", {}).get("ws", {}).get("puppeteer")
-            if not ws_endpoint:
-                self.app.after(0, self._log, "AdsPower start returned no CDP endpoint")
-                return
+            # Treat code=0 as browser started even if CDP endpoint is missing,
+            # so the finally block attempts a cleanup stop.
             browser_started = True
+            ws_endpoint, cdp_reason, cdp_detail = _adspower_cdp_endpoint(data)
+            if cdp_reason:
+                stats = _warmup_fail_stats(cdp_reason, cdp_detail)
+                self.app.after(0, self._log, f"AdsPower error: {cdp_detail}")
+                return
+            if self._stop_requested:
+                stats = _warmup_fail_stats(
+                    "stopped",
+                    "stop requested after browser start before Playwright connect",
+                )
+                self.app.after(0, self._log,
+                               "Warmup stopped before Playwright connect")
+                return
             self.app.after(0, self._log, "Browser started, connecting Playwright...")
 
             # 2. Connect Playwright
             from playwright.sync_api import sync_playwright
-            from core.account_warmer import AccountWarmer
+            from core.account_warmer import AccountWarmer, warmup_stats_ok
 
             with sync_playwright() as p:
                 browser = p.chromium.connect_over_cdp(ws_endpoint)
@@ -1809,13 +1909,50 @@ class WarmupTab:
                     ctx = contexts[0]
                 else:
                     ctx = browser.new_context()
-                pages = ctx.pages if ctx else []
-                page = pages[0] if pages else ctx.new_page()
+                all_pages = list(ctx.pages) if ctx else []
+                def _page_is_closed(pg):
+                    try:
+                        return bool(pg.is_closed())
+                    except Exception:
+                        return False
+                page = None
+                closed = 0
+                for pg in all_pages:
+                    try:
+                        url = pg.url or ""
+                    except Exception:
+                        url = ""
+                    if "reddit.com" in url and not _page_is_closed(pg):
+                        page = pg
+                        break
+                if not page:
+                    for pg in all_pages:
+                        if not _page_is_closed(pg):
+                            page = pg
+                            break
                 if page is None:
-                    raise RuntimeError("No browser page is available for warmup")
+                    page = ctx.new_page()
+                for pg in all_pages:
+                    if pg is page:
+                        continue
+                    try:
+                        pg.close()
+                        closed += 1
+                    except Exception:
+                        pass
+                if page is None or _page_is_closed(page):
+                    raise RuntimeError("No live browser page is available for warmup")
 
-                self.app.after(0, self._log, "Playwright connected")
+                tab_msg = "Playwright connected"
+                if closed:
+                    tab_msg += f" (closed {closed} stale tab{'s' if closed != 1 else ''})"
+                self.app.after(0, self._log, tab_msg)
                 if self._stop_requested:
+                    stats = {
+                        "ok": False,
+                        "failure_reason": "stopped",
+                        "failure_detail": "stop requested before session start",
+                    }
                     self.app.after(0, self._log, "Warmup stopped before session start")
                     return
 
@@ -1867,19 +2004,34 @@ class WarmupTab:
                     self._log_handler = None
 
                 # 7. Report
-                self.app.after(0, self._log,
-                    f"\n=== WARMUP COMPLETE ===\n"
-                    f"Sessions: {stats['sessions']}\n"
-                    f"Time: {elapsed // 60}m {elapsed % 60}s\n"
-                    f"Scrolls: {stats['scrolls']}\n"
-                    f"Upvotes: {stats['upvotes']}, "
-                    f"Downvotes: {stats['downvotes']}\n"
-                    f"Comments: {stats['comments']}\n"
-                    f"Joins: {stats['joins']}\n"
-                     f"Posts clicked: {stats['posts_clicked']}\n"
-                     f"Subs browsed: {stats['subs_browsed']}")
+                if warmup_stats_ok(stats):
+                    self.app.after(0, self._log,
+                        f"\n=== WARMUP COMPLETE ===\n"
+                        f"Sessions: {stats['sessions']}\n"
+                        f"Time: {elapsed // 60}m {elapsed % 60}s\n"
+                        f"Scrolls: {stats['scrolls']}\n"
+                        f"Upvotes: {stats['upvotes']}, "
+                        f"Downvotes: {stats['downvotes']}\n"
+                        f"Comments: {stats['comments']}\n"
+                        f"Joins: {stats['joins']}\n"
+                         f"Posts clicked: {stats['posts_clicked']}\n"
+                         f"Subs browsed: {stats['subs_browsed']}")
+                else:
+                    if isinstance(stats, dict) and stats.get("failure_reason") == "stopped":
+                        self.app.after(0, self._log,
+                                       f"Warmup stopped: {_warmup_failure_text(stats)}")
+                    else:
+                        self.app.after(0, self._log,
+                                       f"Warmup failed before session start: {_warmup_failure_text(stats)}")
 
         except Exception as e:
+            if stats is None:
+                if self._stop_requested:
+                    stats = _warmup_fail_stats("stopped", "stop requested during warmup startup")
+                elif not browser_started:
+                    stats = _warmup_fail_stats("adspower_start_error", str(e))
+                else:
+                    stats = _warmup_fail_stats("warmup_worker_error", str(e))
             self.app.after(0, self._log, f"Warmup error: {e}")
         finally:
             # Clean up handler if it was attached
@@ -1941,7 +2093,7 @@ class WarmupTab:
         self.stop_btn.configure(state="disabled")
         self.refresh_btn.configure(state="normal")
 
-        if stats:
+        if _warmup_stats_ok(stats):
             self._update_session_stats(stats)
             self._last_action_log = stats.get("action_log", [])
             elapsed = stats.get("total_sec", 0)
@@ -1951,7 +2103,11 @@ class WarmupTab:
                      f"{stats['upvotes']}up/{stats['downvotes']}down, "
                      f"{stats['comments']} comments")
         else:
-            self.progress_label.configure(text="Warmup failed or stopped")
+            if stats and (stats.get("failure_reason") == "stopped"):
+                self.progress_label.configure(text="Warmup stopped")
+            else:
+                self.progress_label.configure(
+                    text=_warmup_failure_text(stats) if stats else "Warmup failed or stopped")
 
         # Refresh lifetime totals from DB
         profile_id = self.profile_entry.get().strip()
@@ -2177,6 +2333,10 @@ class WarmupTab:
         self.app.after(0, self._log, f"[{group}] Rotating proxy IP before next account...")
         fail_tokens = ("error", "failed", "invalid", "forbidden", "denied")
         for attempt in range(1, 4):
+            if self._run_all_stop:
+                self.app.after(0, self._log,
+                               f"[{group}] Stop All requested during proxy rotation")
+                return None
             try:
                 resp = requests.get(url, timeout=20)
                 body = (resp.text or "").strip()
@@ -2196,7 +2356,8 @@ class WarmupTab:
                         )
                         # Give the provider time to fully apply the new IP.
                         # fxdx.in mobile tunnels need ~30s to fully establish.
-                        time.sleep(30)
+                        if not self._run_all_sleep(30, f"[{group}] proxy rotation settle wait"):
+                            return None
                         return True
                 else:
                     self.app.after(
@@ -2208,13 +2369,27 @@ class WarmupTab:
                     0, self._log,
                     f"[{group}] Rotation request failed (attempt {attempt}/3): {e}"
                 )
-            time.sleep(5)
+            if attempt < 3 and not self._run_all_sleep(
+                    5, f"[{group}] proxy rotation retry backoff"):
+                return None
 
         self.app.after(
             0, self._log,
             f"[{group}] ROTATION FAILED after 3 attempts. Stopping this group to avoid bans."
         )
         return False
+
+    def _run_all_sleep(self, seconds, label=None):
+        """Interruptible sleep for Run All waits (rotation/backoff/cooldowns)."""
+        end = time.time() + max(0.0, float(seconds))
+        while time.time() < end:
+            if self._run_all_stop:
+                if label:
+                    self.app.after(0, self._log,
+                                   f"Stop All requested during {label} — skipping wait")
+                return False
+            time.sleep(min(0.5, max(0.0, end - time.time())))
+        return True
 
     def _load_profile_data(self, username):
         """Load persona/attributes from account_profiles.json if available."""
@@ -2261,10 +2436,11 @@ class WarmupTab:
 
         self._run_all_active = True
         self._run_all_stop = False
-        self._group_results = {}
-        self._group_warmers = {}
+        with self._run_all_lock:
+            self._group_results = {}
+            self._group_warmers = {}
+            self._rotation_failed_groups = set()
         self._group_threads = {}
-        self._rotation_failed_groups = set()
 
         # UI state
         self.run_all_btn.configure(state="disabled", text="Running All...")
@@ -2343,8 +2519,9 @@ class WarmupTab:
                        "Mode: continuous cycling until all at daily cap\n")
 
         # Initialize cycling state
-        self._daily_caps_cache = {}
-        self._accounts_at_cap = set()
+        with self._run_all_lock:
+            self._daily_caps_cache = {}
+            self._accounts_at_cap = set()
         self._cycle_count = 0
         self._last_cycle_date = datetime.now().strftime("%Y-%m-%d")
 
@@ -2363,7 +2540,9 @@ class WarmupTab:
                 break
 
             # Check if ALL active accounts hit their daily cap
-            if self._accounts_at_cap >= active_ids:
+            with self._run_all_lock:
+                accounts_at_cap = set(self._accounts_at_cap)
+            if accounts_at_cap >= active_ids:
                 self.app.after(0, self._log,
                                "\n=== ALL ACCOUNTS AT DAILY CAP — DONE ===")
                 break
@@ -2429,15 +2608,17 @@ class WarmupTab:
         # Day boundary check — reset caps at midnight
         current_date = datetime.now().strftime("%Y-%m-%d")
         if self._last_cycle_date != current_date:
-            self._daily_caps_cache = {}
-            self._accounts_at_cap = set()
+            with self._run_all_lock:
+                self._daily_caps_cache = {}
+                self._accounts_at_cap = set()
             self._last_cycle_date = current_date
             self.app.after(0, self._log, "=== NEW DAY — daily caps reset ===")
 
-        self._group_results = {}
-        self._group_warmers = {}
+        with self._run_all_lock:
+            self._group_results = {}
+            self._group_warmers = {}
+            self._rotation_failed_groups = set()
         self._group_threads = {}
-        self._rotation_failed_groups = set()
 
         # Reset group labels
         for grp, lbl in self._group_labels.items():
@@ -2459,14 +2640,17 @@ class WarmupTab:
 
         # Check if any account actually ran
         total_ran = 0
-        for results in self._group_results.values():
+        with self._run_all_lock:
+            results_snapshot = [list(results) for results in self._group_results.values()]
+        for results in results_snapshot:
             total_ran += sum(1 for r in results if r.get("status") == "success")
         return total_ran > 0
 
     def _run_group_cycle(self, group, accounts, grok_key):
         """Process accounts in one proxy group for one cycle, checking daily caps."""
         results = []
-        self._group_results[group] = results
+        with self._run_all_lock:
+            self._group_results[group] = results
 
         shuffled = list(accounts)
         random.shuffle(shuffled)
@@ -2481,11 +2665,13 @@ class WarmupTab:
             pid = acc["adspower_id"]
 
             # Get or create daily cap for this account (cached per day)
-            if pid not in self._daily_caps_cache:
+            with self._run_all_lock:
+                cap = self._daily_caps_cache.get(pid)
+            if cap is None:
                 day = get_warmup_day(pid) or 1
-                self._daily_caps_cache[pid] = get_daily_cap(day)
-
-            cap = self._daily_caps_cache[pid]
+                computed_cap = get_daily_cap(day)
+                with self._run_all_lock:
+                    cap = self._daily_caps_cache.setdefault(pid, computed_cap)
             totals = get_daily_totals(pid)
 
             remaining_comments = cap["comments"] - totals.get("comments", 0)
@@ -2520,14 +2706,22 @@ class WarmupTab:
 
         # Rotate proxy BEFORE the first account
         self.app.after(0, self._log, f"[{group}] Initial proxy rotation...")
-        if not self._rotate_proxy(group):
+        rotation_result = self._rotate_proxy(group)
+        if rotation_result is None:
+            self.app.after(0, self._log,
+                           f"[{group}] Stop requested during initial rotation — halting group")
+            return
+        if not rotation_result:
             self.app.after(0, self._log,
                            f"[{group}] Initial rotation failed — skipping group this cycle")
-            self._rotation_failed_groups.add(group)
+            with self._run_all_lock:
+                self._rotation_failed_groups.add(group)
             return
 
         for i, acc in enumerate(runnable):
-            if group in self._rotation_failed_groups:
+            with self._run_all_lock:
+                rotation_failed = group in self._rotation_failed_groups
+            if rotation_failed:
                 self.app.after(0, self._log,
                                f"[{group}] STOPPING GROUP: rotation failed.")
                 break
@@ -2544,7 +2738,8 @@ class WarmupTab:
             self.app.after(0, self._update_group_progress, group, i + 1, i, len(runnable))
 
             result = self._warmup_one_account(acc, group, grok_key)
-            results.append(result)
+            with self._run_all_lock:
+                results.append(result)
 
             status = result.get("status", "?")
             self.app.after(0, self._log, f"[{group}] {acc['username']}: {status}")
@@ -2553,20 +2748,20 @@ class WarmupTab:
             # pause the group and rotate before hammering the next account.
             result_stats = result.get("stats", {})
             result_sec = result_stats.get("total_sec", -1) if isinstance(result_stats, dict) else -1
-            if status in ("success", "error", "browser_crashed") and result_sec >= 0 and result_sec < 30:
+            if status in ("success", "error", "browser_crashed", "proxy_dead", "no_feed") and result_sec >= 0 and result_sec < 30:
                 self.app.after(0, self._log,
                                f"[{group}] Tunnel appears dead ({result_sec}s session). "
                                f"Pausing 60s + rotating before next account...")
-                for _ in range(60):
-                    if self._run_all_stop:
-                        break
-                    time.sleep(1)
+                self._run_all_sleep(60, f"[{group}] tunnel cooldown wait")
                 if not self._run_all_stop:
-                    if not self._rotate_proxy(group):
+                    rotation_result = self._rotate_proxy(group)
+                    if rotation_result is False:
                         with self._run_all_lock:
                             self._rotation_failed_groups.add(group)
 
-            if group in self._rotation_failed_groups:
+            with self._run_all_lock:
+                rotation_failed = group in self._rotation_failed_groups
+            if rotation_failed:
                 self.app.after(0, self._log,
                                f"[{group}] STOPPING GROUP after {acc['username']}: "
                                f"rotation failed.")
@@ -2603,26 +2798,54 @@ class WarmupTab:
                 f"?user_id={adspower_id}&api_key={api_key}",
                 timeout=60,
             )
-            data = resp.json()
+            try:
+                data = resp.json()
+            except Exception as e:
+                return {"profile": profile_key, "status": "failed",
+                        "adspower_id": adspower_id,
+                        "error": f"invalid AdsPower JSON: {e}"}
         except Exception as e:
             return {"profile": profile_key, "status": "failed",
                     "adspower_id": adspower_id, "error": str(e)}
 
+        if not isinstance(data, dict):
+            return {"profile": profile_key, "status": "failed",
+                    "adspower_id": adspower_id,
+                    "error": f"non-dict AdsPower response ({type(data).__name__})"}
         if data.get("code") != 0:
             return {"profile": profile_key, "status": "failed",
                     "adspower_id": adspower_id, "error": str(data)}
-        ws_endpoint = data.get("data", {}).get("ws", {}).get("puppeteer")
-        if not ws_endpoint:
-            return {"profile": profile_key, "status": "failed",
-                    "adspower_id": adspower_id, "error": "no CDP endpoint"}
+        # Treat code=0 as "browser may be live"; missing-CDP returns must stop
+        # explicitly (they happen before the main try/finally below).
         browser_started = True
+        ws_endpoint, cdp_reason, cdp_detail = _adspower_cdp_endpoint(data)
+        if cdp_reason:
+            try:
+                requests.get(
+                    f"{api_base}/api/v1/browser/stop"
+                    f"?user_id={adspower_id}&api_key={api_key}",
+                    timeout=15,
+                )
+                self.app.after(0, self._log,
+                               "  Browser stopped (invalid/missing CDP endpoint)")
+            except Exception as e:
+                self.app.after(0, self._log,
+                               f"  Failed to stop browser after invalid/missing CDP endpoint: {e}")
+            return {"profile": profile_key, "status": "failed",
+                    "adspower_id": adspower_id, "error": cdp_detail}
         _acct_start_ts = time.time()
 
-        from playwright.sync_api import sync_playwright
-        from core.account_warmer import AccountWarmer
-        from core.ban_detector import check_account_health, BanStatus
-
         try:
+            from playwright.sync_api import sync_playwright
+            from core.account_warmer import AccountWarmer, warmup_stats_ok
+            from core.ban_detector import check_account_health, BanStatus
+
+            if self._run_all_stop:
+                self.app.after(0, self._log,
+                               "  Stop All requested before Playwright connect — skipping")
+                return {"profile": profile_key, "status": "stopped",
+                        "adspower_id": adspower_id, "proxy_group": group,
+                        "error": "stop requested before Playwright connect"}
             with sync_playwright() as p:
                 # CDP connection with retries
                 browser = None
@@ -2635,12 +2858,20 @@ class WarmupTab:
                             wait = 2 * (attempt + 1)
                             self.app.after(0, self._log,
                                            f"  CDP retry in {wait}s... ({e})")
-                            time.sleep(wait)
+                            if not self._run_all_sleep(wait, "Run All CDP retry wait"):
+                                return {"profile": profile_key, "status": "stopped",
+                                        "adspower_id": adspower_id, "proxy_group": group,
+                                        "error": "stop requested during Playwright connect retry"}
                         else:
                             raise
 
                 ctx = browser.contexts[0] if browser.contexts else browser.new_context()
                 all_pages = list(ctx.pages) if ctx else []
+                def _page_is_closed(pg):
+                    try:
+                        return bool(pg.is_closed())
+                    except Exception:
+                        return False
 
                 # Pick existing Reddit tab or first tab
                 page = None
@@ -2649,11 +2880,16 @@ class WarmupTab:
                         url = pg.url or ""
                     except Exception:
                         url = ""
-                    if "reddit.com" in url:
+                    if "reddit.com" in url and not _page_is_closed(pg):
                         page = pg
                         break
                 if not page:
-                    page = all_pages[0] if all_pages else ctx.new_page()
+                    for pg in all_pages:
+                        if not _page_is_closed(pg):
+                            page = pg
+                            break
+                if page is None:
+                    page = ctx.new_page()
 
                 # Close stale extra tabs
                 for pg in all_pages:
@@ -2662,6 +2898,16 @@ class WarmupTab:
                             pg.close()
                         except Exception:
                             pass
+
+                if page is None or _page_is_closed(page):
+                    raise RuntimeError("No live browser page available for Run All warmup")
+
+                if self._run_all_stop:
+                    self.app.after(0, self._log,
+                                   "  Stop All requested before health check — skipping")
+                    return {"profile": profile_key, "status": "stopped",
+                            "adspower_id": adspower_id, "proxy_group": group,
+                            "error": "stop requested before warmup start"}
 
                 # === BAN CHECK ===
                 self.app.after(0, self._log, "  Checking account health...")
@@ -2731,7 +2977,8 @@ class WarmupTab:
                     poetry_warmup=poetry_on,
                     karma_target=poetry_karma,
                 )
-                self._group_warmers[group] = warmer
+                with self._run_all_lock:
+                    self._group_warmers[group] = warmer
 
                 if self._run_all_stop:
                     warmer.stop_requested = True
@@ -2757,7 +3004,28 @@ class WarmupTab:
                         warmer_logger.removeHandler(handler)
                     except Exception:
                         pass
-                    self._group_warmers[group] = None
+                    with self._run_all_lock:
+                        self._group_warmers[group] = None
+
+                if not warmup_stats_ok(stats):
+                    reason = (stats or {}).get("failure_reason", "warmup_failed")
+                    detail = (stats or {}).get("failure_detail", "")
+                    if reason == "proxy_dead":
+                        status_name = "proxy_dead"
+                    elif reason == "no_feed_loaded":
+                        status_name = "no_feed"
+                    elif reason == "browser_closed":
+                        status_name = "browser_crashed"
+                    elif reason == "stopped":
+                        status_name = "stopped"
+                    else:
+                        status_name = "warmup_failed"
+                    log_prefix = "  WARMUP STOPPED" if status_name == "stopped" else "  WARMUP FAILED"
+                    self.app.after(0, self._log,
+                                   f"{log_prefix}: {_warmup_failure_text(stats)}")
+                    return {"profile": profile_key, "status": status_name,
+                            "adspower_id": adspower_id, "proxy_group": group,
+                            "error": detail or reason, "stats": stats}
 
                 self.app.after(0, self._log,
                                f"  DONE â€” {stats['comments']}cmt, {stats['upvotes']}up, "
@@ -2787,6 +3055,11 @@ class WarmupTab:
             return {"profile": profile_key, "status": "error",
                     "adspower_id": adspower_id, "error": str(e)}
         finally:
+            # Defensive cleanup: clear stale warmer ref if an exception skipped inner finally.
+            with self._run_all_lock:
+                if self._group_warmers.get(group) is not None:
+                    self._group_warmers[group] = None
+
             # 1. Close browser FIRST
             if browser_started:
                 try:
@@ -2799,20 +3072,25 @@ class WarmupTab:
                 except Exception as e:
                     self.app.after(0, self._log, f"  Failed to stop browser: {e}")
 
-            # 2. Rotate proxy AFTER browser closed.
-            #    SKIP rotation if the session was instant-fail (< 30s) —
-            #    rotating a dead tunnel just makes it worse.
-            elapsed = time.time() - _acct_start_ts if _acct_start_ts else 0
-            if elapsed < 30:
+            if self._run_all_stop:
                 self.app.after(0, self._log,
-                               f"  Skipping rotation — session was only {int(elapsed)}s "
-                               f"(tunnel likely dead, rotating won't help)")
-                time.sleep(5)
+                               "  Stop All active — skipping post-account rotation cleanup")
             else:
-                time.sleep(10)
-                if not self._rotate_proxy(group):
-                    with self._run_all_lock:
-                        self._rotation_failed_groups.add(group)
+                # 2. Rotate proxy AFTER browser closed.
+                #    SKIP rotation if the session was instant-fail (< 30s) —
+                #    rotating a dead tunnel just makes it worse.
+                elapsed = time.time() - _acct_start_ts if _acct_start_ts else 0
+                if elapsed < 30:
+                    self.app.after(0, self._log,
+                                   f"  Skipping rotation — session was only {int(elapsed)}s "
+                                   f"(tunnel likely dead, rotating won't help)")
+                    self._run_all_sleep(5, "post-account cooldown wait")
+                else:
+                    if self._run_all_sleep(10, "post-account rotation wait"):
+                        rotation_result = self._rotate_proxy(group)
+                        if rotation_result is False:
+                            with self._run_all_lock:
+                                self._rotation_failed_groups.add(group)
 
     def _stop_run_all(self):
         """Stop all running warmups gracefully."""
@@ -2822,15 +3100,18 @@ class WarmupTab:
         self.app.after(0, self._log,
                        "Stop All requested — finishing current account, "
                        "will not start next cycle...")
-        for grp, warmer in self._group_warmers.items():
+        with self._run_all_lock:
+            warmers = list(self._group_warmers.items())
+        for grp, warmer in warmers:
             if warmer:
                 warmer.stop_requested = True
 
     def _reset_today(self):
         """Clear today's warmup flags and daily cap cache."""
         count = reset_today_warmup()
-        self._daily_caps_cache = {}
-        self._accounts_at_cap = set()
+        with self._run_all_lock:
+            self._daily_caps_cache = {}
+            self._accounts_at_cap = set()
         self._log(f"Reset {count} account(s) + daily caps — all can re-run today.")
         self._refresh_stats_panel()
 
@@ -3042,7 +3323,8 @@ class WarmupTab:
 
     def _update_cycle_status(self):
         """Update the overall label with cycle info."""
-        capped = len(self._accounts_at_cap)
+        with self._run_all_lock:
+            capped = len(self._accounts_at_cap)
         if self._next_cycle_time:
             remaining = (self._next_cycle_time - datetime.now()).total_seconds()
             mins = max(0, int(remaining // 60))
@@ -3087,9 +3369,12 @@ class WarmupTab:
         self.start_btn.configure(state="normal")
 
         # Summarize results from last cycle
-        all_results = []
-        for grp, results in self._group_results.items():
-            all_results.extend(results)
+        with self._run_all_lock:
+            all_results = []
+            for results in self._group_results.values():
+                all_results.extend(list(results))
+            capped_count = len(self._accounts_at_cap)
+            rotation_failed_groups = sorted(self._rotation_failed_groups)
 
         by_status = {}
         for r in all_results:
@@ -3097,23 +3382,24 @@ class WarmupTab:
             by_status.setdefault(s, []).append(r.get("profile", "?"))
 
         self._log(f"\n=== CONTINUOUS WARMUP COMPLETE — {self._cycle_count} cycles ===")
-        self._log(f"  Accounts at daily cap: {len(self._accounts_at_cap)}")
+        self._log(f"  Accounts at daily cap: {capped_count}")
         for status, names in sorted(by_status.items()):
             self._log(f"  {status}: {len(names)}")
             if status in ("banned", "shadowbanned", "not_logged_in",
-                          "browser_crashed", "error"):
+                          "browser_crashed", "error",
+                          "proxy_dead", "no_feed", "warmup_failed", "stopped"):
                 for n in names:
                     self._log(f"    - {n}")
 
-        if self._rotation_failed_groups:
-            self._log(f"  rotation_failed_groups: {len(self._rotation_failed_groups)}")
-            for grp in sorted(self._rotation_failed_groups):
+        if rotation_failed_groups:
+            self._log(f"  rotation_failed_groups: {len(rotation_failed_groups)}")
+            for grp in rotation_failed_groups:
                 self._log(f"    - {grp}")
 
         total = len(all_results)
         success = len(by_status.get("success", []))
         banned = len(by_status.get("banned", []))
-        capped = len(self._accounts_at_cap)
+        capped = capped_count
         self._run_all_overall_label.configure(
             text=(
                 f"Done — {self._cycle_count} cycles | "
@@ -3135,14 +3421,12 @@ class WarmupTab:
         if group in self._group_labels:
             self._group_labels[group].configure(text=f"{group}: {done}/{total}")
         # Update overall label
-        total_all = 0
         done_all = 0
         banned_all = 0
-        for grp, results in self._group_results.items():
+        with self._run_all_lock:
+            group_results_snapshot = [list(results) for results in self._group_results.values()]
+        for results in group_results_snapshot:
             done_all += len(results)
             banned_all += sum(1 for r in results if r.get("status") == "banned")
-        for grp, accs in self._group_results.items():
-            pass  # count is already in done_all
         self._run_all_overall_label.configure(
             text=f"Running â€” {done_all} done, {banned_all} banned")
-

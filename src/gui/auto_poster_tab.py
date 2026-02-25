@@ -32,7 +32,7 @@ from core.post_checker import run_check_cycle
 from core.humanizer import Humanizer
 from core.ban_detector import check_post_result, check_account_health, BanStatus
 from core.spoofer import spoof_file, cleanup_spoof_dir
-from core.account_warmer import AccountWarmer
+from core.account_warmer import AccountWarmer, warmup_stats_ok
 from core.post_history import get_warmup_status, get_warmup_day
 from processors.account_profile import (
     ProfileManager,
@@ -164,11 +164,70 @@ def _apply_link_tags(textbox, msg):
             end = f"{start}+{len(url)}c"
             textbox._textbox.tag_add("link", start, end)
 
+
+def _warmup_failure_text(stats):
+    if not isinstance(stats, dict):
+        return "warmup failed"
+    reason = (stats.get("failure_reason") or "warmup failed").replace("_", " ")
+    detail = (stats.get("failure_detail") or "").strip()
+    return f"{reason}: {detail}" if detail else reason
+
+
+def _warmup_was_stopped(stats):
+    return isinstance(stats, dict) and (stats.get("failure_reason") == "stopped")
+
+
+def _warmup_fail_stats(reason, detail=""):
+    return {
+        "ok": False,
+        "failure_reason": str(reason or "warmup_failed"),
+        "failure_detail": str(detail or "").strip(),
+    }
+
+
+def _adspower_cdp_endpoint(payload):
+    """Validate AdsPower browser/start payload shape and extract CDP endpoint."""
+    if not isinstance(payload, dict):
+        return "", "adspower_bad_response", (
+            f"browser/start returned non-dict JSON ({type(payload).__name__})")
+
+    data_node = payload.get("data")
+    if data_node is None:
+        data_node = {}
+    elif not isinstance(data_node, dict):
+        return "", "adspower_bad_response", (
+            "AdsPower browser/start payload field 'data' is not an object")
+
+    ws_node = data_node.get("ws")
+    if ws_node is None:
+        ws_node = {}
+    elif not isinstance(ws_node, dict):
+        return "", "adspower_bad_response", (
+            "AdsPower browser/start payload field 'data.ws' is not an object")
+
+    endpoint = ws_node.get("puppeteer")
+    if endpoint is None or endpoint == "":
+        return "", "adspower_missing_cdp", (
+            "AdsPower browser/start succeeded but no CDP endpoint was returned")
+    if not isinstance(endpoint, str):
+        return "", "adspower_bad_response", (
+            "AdsPower browser/start payload field 'data.ws.puppeteer' is not a string")
+
+    endpoint = endpoint.strip()
+    if not endpoint:
+        return "", "adspower_missing_cdp", (
+            "AdsPower browser/start succeeded but no CDP endpoint was returned")
+    return endpoint, None, ""
+
+
 ADSPOWER_CONFIG_PATH = os.path.join(
     os.path.dirname(__file__), "..", "uploaders", "redgifs", "adspower_config.json"
 )
 ACCOUNT_PROFILES_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "config", "account_profiles.json"
+)
+SCHEDULE_CONFIG_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "config", "schedule_config.json"
 )
 CARD_FG = ("#F7F9FC", "#1E2633")
 HERO_FG = ("#EAF3FF", "#1B2A40")
@@ -300,8 +359,10 @@ class AutoPosterTab:
         self.persona_profiles = {}
         self.is_running = False
         self.stop_all = False
+        self._posting_stop_requested = False
         self._active_warmups = {}   # {profile_id: {"warmer": warmer, "stop": False}}
         self._active_proxy_groups = {}  # {proxy_group: profile_id} — prevents concurrent use
+        self._active_proxy_groups_lock = threading.Lock()
         self._warmup_log_handler = None
         self._last_action_log = []
 
@@ -360,25 +421,51 @@ class AutoPosterTab:
                 return prof.get("proxy_group", "")
         return ""
 
-    def _rotate_proxy(self, proxy_group):
+    def _rotate_proxy(self, proxy_group, stop_checker=None, stop_label=None):
         """Rotate the proxy for a given proxy group by hitting its rotation URL."""
         if not proxy_group:
             return True
         pg = self._queue_config.get("proxy_groups", {}).get(proxy_group, {})
-        rotation_url = pg.get("rotation_url", "").strip()
+        rotation_url = (pg.get("rotation_url", "") or "").strip()
+        try:
+            wait_sec = max(0, int(pg.get("wait_after_rotate_sec", 10) or 10))
+        except Exception:
+            wait_sec = 10
+        source = "queue_config.json"
+        if not rotation_url:
+            try:
+                if os.path.exists(SCHEDULE_CONFIG_PATH):
+                    with open(SCHEDULE_CONFIG_PATH, encoding="utf-8") as f:
+                        sched = json.load(f)
+                    sched_pg = (sched.get("proxy_groups", {}) or {}).get(proxy_group, {}) or {}
+                    rotation_url = (sched_pg.get("rotation_url", "") or "").strip()
+                    if rotation_url:
+                        wait_sec = max(wait_sec, 30)  # fxdx mobile tunnels need more settle time
+                        source = "schedule_config.json"
+            except Exception as e:
+                self.app.after(0, self._log,
+                    f"[Proxy] Failed loading schedule_config fallback for {proxy_group}: {e}")
         if not rotation_url:
             self.app.after(0, self._log,
-                f"[Proxy] No rotation URL for {proxy_group}, skipping rotation")
-            return True
-        wait_sec = pg.get("wait_after_rotate_sec", 10)
+                f"[Proxy] ERROR: No rotation URL for {proxy_group} in queue_config or schedule_config")
+            return False
         try:
+            if stop_checker and stop_checker():
+                self.app.after(0, self._log,
+                    f"[Proxy] Stop requested before rotating {proxy_group}")
+                return None
             self.app.after(0, self._log,
-                f"[Proxy] Rotating {proxy_group}...")
+                f"[Proxy] Rotating {proxy_group} ({source})...")
             resp = _requests.get(rotation_url, timeout=30)
             snippet = resp.text[:100].strip()
             self.app.after(0, self._log,
                 f"[Proxy] Rotation response: {snippet}")
-            time.sleep(wait_sec)
+            if wait_sec and not self._sleep_with_stop(
+                    wait_sec,
+                    stop_checker=stop_checker,
+                    label=(stop_label or f"{proxy_group} proxy rotation settle wait"),
+                    log_prefix="[Proxy]"):
+                return None
             self.app.after(0, self._log,
                 f"[Proxy] Waited {wait_sec}s after rotation")
             return True
@@ -391,16 +478,26 @@ class AutoPosterTab:
         """Try to acquire exclusive access to a proxy group. Returns True if acquired."""
         if not proxy_group:
             return True  # No proxy group = no restriction
-        current_user = self._active_proxy_groups.get(proxy_group)
-        if current_user and current_user != profile_id:
-            return False
-        self._active_proxy_groups[proxy_group] = profile_id
+        with self._active_proxy_groups_lock:
+            current_user = self._active_proxy_groups.get(proxy_group)
+            if current_user and current_user != profile_id:
+                return False
+            self._active_proxy_groups[proxy_group] = profile_id
         return True
 
     def _release_proxy_group(self, proxy_group, profile_id):
         """Release a proxy group lock."""
-        if proxy_group and self._active_proxy_groups.get(proxy_group) == profile_id:
-            del self._active_proxy_groups[proxy_group]
+        if not proxy_group:
+            return
+        with self._active_proxy_groups_lock:
+            if self._active_proxy_groups.get(proxy_group) == profile_id:
+                del self._active_proxy_groups[proxy_group]
+
+    def _get_proxy_group_owner(self, proxy_group):
+        if not proxy_group:
+            return None
+        with self._active_proxy_groups_lock:
+            return self._active_proxy_groups.get(proxy_group)
 
     def _build_account_map(self):
         """Build dropdown options with persona-linked accounts first."""
@@ -672,7 +769,7 @@ class AutoPosterTab:
         if profile_id in self._active_warmups:
             return "Warmup", "#2563EB"
         for campaign in self.campaigns:
-            if campaign.profile_id == profile_id and campaign.status == "posting":
+            if campaign.profile_id == profile_id and campaign.status in ("posting", "connecting"):
                 return "Posting", "#16A34A"
         for campaign in self.campaigns:
             if campaign.profile_id == profile_id and campaign.status == "analyzing":
@@ -696,11 +793,16 @@ class AutoPosterTab:
             if w:
                 w.stop_requested = True
         # Stop campaigns for this profile
+        stopped_posting = False
         for campaign in self.campaigns:
             if campaign.profile_id == ads_id:
                 campaign.stop_requested = True
+                stopped_posting = True
                 if campaign.warmer:
                     campaign.warmer.stop_requested = True
+        if stopped_posting:
+            # Preserve stopped-vs-complete completion wording/timer behavior.
+            self._posting_stop_requested = True
         self._log(f"Stop requested for {display_str.split(' (')[0]}")
         self._refresh_account_statuses()
 
@@ -716,7 +818,7 @@ class AutoPosterTab:
             wb = row_info.get("warmup_btn")
             sb = row_info.get("stop_btn")
             is_active = (pid in self._active_warmups or
-                         any(c.profile_id == pid and c.status == "posting"
+                         any(c.profile_id == pid and c.status in ("posting", "connecting")
                              for c in self.campaigns))
             if sb:
                 if is_active:
@@ -2798,6 +2900,7 @@ class AutoPosterTab:
 
         self.is_running = True
         self.stop_all = False
+        self._posting_stop_requested = False
         self.post_btn.configure(state="disabled")
         self.analyze_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
@@ -2835,6 +2938,20 @@ class AutoPosterTab:
             time.sleep(min(0.5, max(0.0, end - time.time())))
         return True
 
+    def _sleep_with_stop(self, seconds, stop_checker=None, label="wait", log_prefix="[Wait]"):
+        """Generic interruptible sleep for GUI workers (rotation settles, retries)."""
+        if not stop_checker:
+            time.sleep(max(0.0, float(seconds)))
+            return True
+        end = time.time() + max(0.0, float(seconds))
+        while time.time() < end:
+            if stop_checker():
+                self.app.after(0, self._log,
+                    f"{log_prefix} Stop requested during {label}, skipping wait")
+                return False
+            time.sleep(min(0.5, max(0.0, end - time.time())))
+        return True
+
     def _campaign_posting_worker(self, camp_idx, campaign):
         """Post all items for one campaign (one AdsPower profile). Runs in its own thread."""
         import requests as req
@@ -2847,13 +2964,47 @@ class AutoPosterTab:
         proxy_group = self._get_account_proxy_group(campaign.profile_id)
         if proxy_group:
             if not self._acquire_proxy_group(proxy_group, campaign.profile_id):
-                current = self._active_proxy_groups.get(proxy_group, "?")
+                current = self._get_proxy_group_owner(proxy_group) or "?"
                 self.app.after(0, self._log,
                     f"[Campaign {camp_idx+1}] BLOCKED: {proxy_group} in use by {current}")
                 self.app.after(0, self._update_campaign_status,
                     camp_idx, "proxy busy", "orange")
                 return
-            self._rotate_proxy(proxy_group)
+            rotation_result = self._rotate_proxy(
+                proxy_group,
+                stop_checker=lambda: self.stop_all or campaign.stop_requested,
+                stop_label=f"Campaign {camp_idx+1} proxy rotation settle wait",
+            )
+            if rotation_result is None:
+                self.app.after(0, self._log,
+                    f"[Campaign {camp_idx+1}] Stopped by user during proxy rotation")
+                self.app.after(0, self._update_campaign_status,
+                    camp_idx, "stopped", "orange")
+                self._release_proxy_group(proxy_group, campaign.profile_id)
+                return
+            if not rotation_result:
+                self.app.after(0, self._log,
+                    f"[Campaign {camp_idx+1}] Proxy rotation failed for {proxy_group}; aborting")
+                self.app.after(0, self._update_campaign_status,
+                    camp_idx, "proxy error", "red")
+                self._release_proxy_group(proxy_group, campaign.profile_id)
+                return
+            if self.stop_all or campaign.stop_requested:
+                self.app.after(0, self._log,
+                    f"[Campaign {camp_idx+1}] Stopped by user before browser start")
+                self.app.after(0, self._update_campaign_status,
+                    camp_idx, "stopped", "orange")
+                self._release_proxy_group(proxy_group, campaign.profile_id)
+                return
+
+        if self.stop_all or campaign.stop_requested:
+            self.app.after(0, self._log,
+                f"[Campaign {camp_idx+1}] Stopped by user before browser start")
+            self.app.after(0, self._update_campaign_status,
+                camp_idx, "stopped", "orange")
+            if proxy_group:
+                self._release_proxy_group(proxy_group, campaign.profile_id)
+            return
 
         # Start AdsPower browser
         api_base = self.adspower_config.get("adspower_api_base", "http://127.0.0.1:50325")
@@ -2863,17 +3014,53 @@ class AutoPosterTab:
             start_url = (f"{api_base}/api/v1/browser/start"
                         f"?user_id={campaign.profile_id}&api_key={api_key}")
             resp = req.get(start_url, timeout=60)
-            data = resp.json()
+            try:
+                data = resp.json()
+            except Exception as e:
+                raise RuntimeError(f"AdsPower start returned invalid JSON ({e})")
+            if not isinstance(data, dict):
+                raise RuntimeError(
+                    f"AdsPower start returned non-dict JSON ({type(data).__name__})")
             if data.get("code") != 0:
                 self.app.after(0, self._log,
                     f"[Campaign {camp_idx+1}] ERROR: Failed to start browser: {data}")
                 self.app.after(0, self._update_campaign_status, camp_idx, "error", "red")
+                if proxy_group:
+                    self._release_proxy_group(proxy_group, campaign.profile_id)
                 return
-            ws_endpoint = data["data"]["ws"]["puppeteer"]
+            ws_endpoint, cdp_reason, cdp_detail = _adspower_cdp_endpoint(data)
+            if cdp_reason:
+                self.app.after(0, self._log,
+                    f"[Campaign {camp_idx+1}] ERROR: {cdp_detail}")
+                self.app.after(0, self._update_campaign_status, camp_idx, "error", "red")
+                try:
+                    stop_url = (f"{api_base}/api/v1/browser/stop"
+                               f"?user_id={campaign.profile_id}&api_key={api_key}")
+                    req.get(stop_url, timeout=10)
+                except Exception:
+                    pass
+                if proxy_group:
+                    self._release_proxy_group(proxy_group, campaign.profile_id)
+                return
+            if self.stop_all or campaign.stop_requested:
+                self.app.after(0, self._log,
+                    f"[Campaign {camp_idx+1}] Stopped by user before Playwright connect")
+                self.app.after(0, self._update_campaign_status, camp_idx, "stopped", "orange")
+                try:
+                    stop_url = (f"{api_base}/api/v1/browser/stop"
+                               f"?user_id={campaign.profile_id}&api_key={api_key}")
+                    req.get(stop_url, timeout=10)
+                except Exception:
+                    pass
+                if proxy_group:
+                    self._release_proxy_group(proxy_group, campaign.profile_id)
+                return
         except Exception as e:
             self.app.after(0, self._log,
                 f"[Campaign {camp_idx+1}] ERROR: AdsPower connection failed: {e}")
             self.app.after(0, self._update_campaign_status, camp_idx, "error", "red")
+            if proxy_group:
+                self._release_proxy_group(proxy_group, campaign.profile_id)
             return
 
         # Connect Playwright
@@ -2884,13 +3071,32 @@ class AutoPosterTab:
             with sync_playwright() as p:
                 browser = p.chromium.connect_over_cdp(ws_endpoint)
                 contexts = browser.contexts
+                def _page_is_closed(pg):
+                    try:
+                        return bool(pg.is_closed())
+                    except Exception:
+                        return False
                 if contexts:
                     context = contexts[0]
-                    pages = context.pages
-                    page = pages[0] if pages else context.new_page()
+                    pages = list(context.pages)
+                    page = None
+                    for pg in pages:
+                        if not _page_is_closed(pg):
+                            page = pg
+                            break
+                    if page is None:
+                        page = context.new_page()
                 else:
                     context = browser.new_context()
                     page = context.new_page()
+                if page is None or _page_is_closed(page):
+                    raise RuntimeError("No live browser page available for campaign")
+                if self.stop_all or campaign.stop_requested:
+                    self.app.after(0, self._log,
+                        f"[Campaign {camp_idx+1}] Stopped by user before account checks")
+                    self.app.after(0, self._update_campaign_status,
+                        camp_idx, "stopped", "orange")
+                    return
 
                 # Setup humanizer
                 try:
@@ -2973,7 +3179,21 @@ class AutoPosterTab:
                 warmer.hijack_ratio = self.hijack_slider.get() / 100.0
                 self._apply_warmup_overrides(warmer)
                 campaign.warmer = warmer
+                if self.stop_all or campaign.stop_requested:
+                    warmer.stop_requested = True
                 warmup_day = warmer.get_day()
+                interleaved_stats_flushed = False
+
+                def _flush_interleaved_warmup_activity():
+                    nonlocal interleaved_stats_flushed
+                    if interleaved_stats_flushed or warmup_mode != "interleaved":
+                        return
+                    if not warmup_stats_ok(getattr(warmer, "stats", None)):
+                        return
+                    record_activity(warmer.profile_id, "upvotes", warmer.stats.get("upvotes", 0))
+                    record_activity(warmer.profile_id, "comments", warmer.stats.get("comments", 0))
+                    record_activity(warmer.profile_id, "joins", warmer.stats.get("joins", 0))
+                    interleaved_stats_flushed = True
 
                 self.app.after(0, self._log,
                     f"[Campaign {camp_idx+1}] Warmup day {warmup_day}, "
@@ -2984,6 +3204,26 @@ class AutoPosterTab:
                     # Full day-scaled browse sessions (8-26 min on day 3)
                     target_subs = [item["sub_name"] for item in campaign.posting_plan]
                     warmup_results = warmer.run_daily_warmup(target_subs=target_subs)
+                    if self.stop_all or campaign.stop_requested:
+                        self.app.after(0, self._log,
+                            f"[Campaign {camp_idx+1}] Stopped by user during warmup")
+                        self.app.after(0, self._update_campaign_status,
+                            camp_idx, "stopped", "orange")
+                        return
+                    if not warmup_stats_ok(warmup_results):
+                        if _warmup_was_stopped(warmup_results):
+                            self.app.after(0, self._log,
+                                f"[Campaign {camp_idx+1}] Warmup stopped: "
+                                f"{_warmup_failure_text(warmup_results)}")
+                            self.app.after(0, self._update_campaign_status,
+                                camp_idx, "stopped", "orange")
+                            return
+                        self.app.after(0, self._log,
+                            f"[Campaign {camp_idx+1}] Warmup failed before session start: "
+                            f"{_warmup_failure_text(warmup_results)}")
+                        self.app.after(0, self._update_campaign_status,
+                            camp_idx, "warmup failed", "red")
+                        return
                     self.app.after(0, self._log,
                         f"[Campaign {camp_idx+1}] Warmup done: "
                         f"{warmup_results.get('sessions', 0)} sessions, "
@@ -3033,9 +3273,32 @@ class AutoPosterTab:
                 success = 0
                 failed = 0
                 banned = 0
+                stopped_during_run = False
+
+                def _campaign_stop_now():
+                    return (self.stop_all or campaign.stop_requested
+                            or getattr(warmer, "stop_requested", False))
+
+                def _mark_stop(stage, err=None):
+                    nonlocal stopped_during_run
+                    stopped_during_run = True
+                    suffix = f": {err}" if err is not None else ""
+                    self.app.after(0, self._log,
+                        f"[Campaign {camp_idx+1}] Stopped by user during {stage}{suffix}")
+
+                def _record_post_outcome(*args, **kwargs):
+                    try:
+                        add_post(*args, **kwargs)
+                        return True
+                    except Exception as record_err:
+                        if _campaign_stop_now():
+                            _mark_stop("result recording", record_err)
+                            return False
+                        raise
 
                 for i, item in enumerate(campaign.posting_plan):
                     if self.stop_all or campaign.stop_requested:
+                        stopped_during_run = True
                         self.app.after(0, self._log,
                             f"[Campaign {camp_idx+1}] Stopped by user")
                         break
@@ -3054,7 +3317,25 @@ class AutoPosterTab:
                         browse_sec = random.randint(browse_lo, browse_hi)
                         self.app.after(0, self._log,
                             f"[Campaign {camp_idx+1}] Browsing ~{browse_sec}s before post {i+1}...")
-                        warmer._run_browse_session(session_sec=browse_sec)
+                        browse_ok = warmer._run_browse_session(session_sec=browse_sec)
+                        if self.stop_all or campaign.stop_requested or getattr(warmer, "stop_requested", False):
+                            _flush_interleaved_warmup_activity()
+                            self.app.after(0, self._log,
+                                f"[Campaign {camp_idx+1}] Stopped by user during interleaved warmup")
+                            self.app.after(0, self._update_campaign_status,
+                                camp_idx, "stopped", "orange")
+                            return
+                        if not browse_ok:
+                            _flush_interleaved_warmup_activity()
+                            run_fail = getattr(warmer, "_run_failure", {}) or {}
+                            fail_reason = str(run_fail.get("reason", "warmup_failed")).replace("_", " ")
+                            fail_detail = str(run_fail.get("detail", "")).strip()
+                            fail_msg = f"{fail_reason}: {fail_detail}" if fail_detail else fail_reason
+                            self.app.after(0, self._log,
+                                f"[Campaign {camp_idx+1}] Interleaved warmup failed: {fail_msg}")
+                            self.app.after(0, self._update_campaign_status,
+                                camp_idx, "warmup failed", "red")
+                            return
 
                     sub = item["sub_name"]
                     title = item["title"]
@@ -3081,12 +3362,36 @@ class AutoPosterTab:
                             self.app.after(0, self._log,
                                 f"  Spoof error: {e} - using original")
 
-                    # Pre-post browsing (light page-level scroll)
-                    if warmup_mode != "none":
-                        humanizer.pre_post_browse(sub)
-
-                    # Post the file
+                    # Pre-post browsing + submit in one try/finally so spoof cleanup runs
+                    # even if a stop lands before the actual post call.
                     try:
+                        if (self.stop_all or campaign.stop_requested
+                                or getattr(warmer, "stop_requested", False)):
+                            stopped_during_run = True
+                            self.app.after(0, self._log,
+                                f"[Campaign {camp_idx+1}] Stopped by user before pre-post browse")
+                            break
+
+                        if warmup_mode != "none":
+                            try:
+                                humanizer.pre_post_browse(sub)
+                            except Exception:
+                                if (self.stop_all or campaign.stop_requested
+                                        or getattr(warmer, "stop_requested", False)):
+                                    stopped_during_run = True
+                                    self.app.after(0, self._log,
+                                        f"[Campaign {camp_idx+1}] Stopped by user during pre-post browse")
+                                    break
+                                raise
+
+                        if (self.stop_all or campaign.stop_requested
+                                or getattr(warmer, "stop_requested", False)):
+                            stopped_during_run = True
+                            self.app.after(0, self._log,
+                                f"[Campaign {camp_idx+1}] Stopped by user before post submit")
+                            break
+
+                        # Post the file
                         ok = post_file_to_subreddit(
                             page=page,
                             subreddit=sub,
@@ -3097,13 +3402,21 @@ class AutoPosterTab:
                         )
 
                         # Check result
-                        post_status, detail = check_post_result(page)
+                        try:
+                            post_status, detail = check_post_result(page)
+                        except Exception as post_result_err:
+                            if _campaign_stop_now():
+                                _mark_stop("post result check", post_result_err)
+                                break
+                            raise
 
                         if post_status == BanStatus.OK:
                             success += 1
                             posts_today += 1
-                            add_post(campaign.profile_id, item["file_hash"],
-                                    sub, title, file_path, "success", detail)
+                            if not _record_post_outcome(
+                                    campaign.profile_id, item["file_hash"],
+                                    sub, title, file_path, "success", detail):
+                                break
                             self.app.after(0, self._log,
                                 f"  SUCCESS -> {detail}")
 
@@ -3111,30 +3424,50 @@ class AutoPosterTab:
                             banned += 1
                             from core.post_history import add_ban
                             add_ban(campaign.profile_id, sub, detail)
-                            add_post(campaign.profile_id, item["file_hash"],
-                                    sub, title, file_path, "banned", error=detail)
+                            if not _record_post_outcome(
+                                    campaign.profile_id, item["file_hash"],
+                                    sub, title, file_path, "banned", error=detail):
+                                break
                             self.app.after(0, self._log,
                                 f"  BANNED from r/{sub}: {detail}")
 
                         elif post_status == BanStatus.RATE_LIMITED:
                             self.app.after(0, self._log,
                                 f"  RATE LIMITED: {detail}. Waiting 5 minutes...")
-                            add_post(campaign.profile_id, item["file_hash"],
-                                    sub, title, file_path, "rate_limited", error=detail)
-                            if not self._wait_with_stop(campaign, 300, "rate-limit backoff"):
+                            if not _record_post_outcome(
+                                    campaign.profile_id, item["file_hash"],
+                                    sub, title, file_path, "rate_limited", error=detail):
+                                break
+                            try:
+                                keep_waiting = self._wait_with_stop(
+                                    campaign, 300, "rate-limit backoff")
+                            except Exception as wait_err:
+                                if _campaign_stop_now():
+                                    _mark_stop("rate-limit wait", wait_err)
+                                    break
+                                raise
+                            if not keep_waiting:
+                                stopped_during_run = True
                                 break
 
                         else:
                             failed += 1
-                            add_post(campaign.profile_id, item["file_hash"],
-                                    sub, title, file_path, "failed", error=detail)
+                            if not _record_post_outcome(
+                                    campaign.profile_id, item["file_hash"],
+                                    sub, title, file_path, "failed", error=detail):
+                                break
                             self.app.after(0, self._log,
                                 f"  FAILED: {detail}")
 
                     except Exception as e:
+                        if _campaign_stop_now():
+                            _mark_stop("post finalization", e)
+                            break
                         failed += 1
-                        add_post(campaign.profile_id, item["file_hash"],
-                                sub, title, file_path, "failed", error=str(e))
+                        if not _record_post_outcome(
+                                campaign.profile_id, item["file_hash"],
+                                sub, title, file_path, "failed", error=str(e)):
+                            break
                         self.app.after(0, self._log,
                             f"  ERROR: {e}")
                     finally:
@@ -3147,19 +3480,32 @@ class AutoPosterTab:
 
                     # Humanized wait between posts
                     if i < len(campaign.posting_plan) - 1:
-                        kept_waiting = humanizer.wait_between_posts(
-                            stop_checker=lambda: self.stop_all or campaign.stop_requested
-                        )
+                        try:
+                            kept_waiting = humanizer.wait_between_posts(
+                                stop_checker=_campaign_stop_now
+                            )
+                        except Exception as wait_err:
+                            if _campaign_stop_now():
+                                _mark_stop("inter-post wait", wait_err)
+                                break
+                            raise
                         if not kept_waiting:
+                            stopped_during_run = True
                             self.app.after(0, self._log,
                                 f"[Campaign {camp_idx+1}] Stopped during inter-post wait")
                             break
 
                 # Record warmup stats to DB (interleaved accumulates across posts)
-                if warmup_mode == "interleaved":
-                    record_activity(warmer.profile_id, "upvotes", warmer.stats.get("upvotes", 0))
-                    record_activity(warmer.profile_id, "comments", warmer.stats.get("comments", 0))
-                    record_activity(warmer.profile_id, "joins", warmer.stats.get("joins", 0))
+                _flush_interleaved_warmup_activity()
+
+                if stopped_during_run or self.stop_all or campaign.stop_requested:
+                    campaign.status = "stopped"
+                    self.app.after(0, self._update_campaign_status,
+                        camp_idx, "stopped", "orange")
+                    self.app.after(0, self._log,
+                        f"\n[Campaign {camp_idx+1}] STOPPED: {success} success, "
+                        f"{failed} failed, {banned} banned\n")
+                    return
 
                 # Done with this campaign
                 campaign.status = "done"
@@ -3190,22 +3536,26 @@ class AutoPosterTab:
 
     def _posting_complete(self):
         """Called when all campaign threads finish."""
+        was_stopped = bool(getattr(self, "_posting_stop_requested", False) or self.stop_all)
         self.is_running = False
         self.stop_all = False
+        self._posting_stop_requested = False
         self.post_btn.configure(state="normal")
         self.analyze_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self.progress_bar.set(1.0)
-        self.progress_label.configure(text="All campaigns complete")
+        self.progress_label.configure(
+            text="Campaign run stopped" if was_stopped else "All campaigns complete")
         self._log("\n" + "=" * 60)
-        self._log("ALL CAMPAIGNS COMPLETE")
+        self._log("ALL CAMPAIGNS STOPPED" if was_stopped else "ALL CAMPAIGNS COMPLETE")
         self._log("=" * 60)
-        # Schedule a delayed performance check (15 min) so Reddit scores settle
-        self._log("Performance check scheduled in 15 minutes...")
-        self._perf_delayed_timer = self.app.after(
-            15 * 60 * 1000, self._start_perf_check)
-        # Also start the periodic 30-min timer
-        self._start_perf_timer()
+        if not was_stopped:
+            # Schedule a delayed performance check (15 min) so Reddit scores settle
+            self._log("Performance check scheduled in 15 minutes...")
+            self._perf_delayed_timer = self.app.after(
+                15 * 60 * 1000, self._start_perf_check)
+            # Also start the periodic 30-min timer
+            self._start_perf_timer()
         self._refresh_account_statuses()
 
     def _stop_all(self):
@@ -3447,19 +3797,59 @@ class AutoPosterTab:
         browser_started = False
         entry = self._active_warmups.get(profile_id, {})
 
+        def _stopped():
+            return entry.get("stop", False)
+
         # Proxy rotation before starting browser
         proxy_group = self._get_account_proxy_group(profile_id)
         if proxy_group:
             if not self._acquire_proxy_group(proxy_group, profile_id):
-                current = self._active_proxy_groups.get(proxy_group, "?")
+                current = self._get_proxy_group_owner(proxy_group) or "?"
                 self.app.after(0, self._log,
                     f"[{profile_id}] BLOCKED: {proxy_group} in use by {current}")
-                self.app.after(0, self._on_warmup_complete, profile_id, None)
+                self.app.after(0, self._on_warmup_complete, profile_id,
+                               _warmup_fail_stats(
+                                   "proxy_busy",
+                                   f"{proxy_group} already in use by {current}",
+                               ))
                 return
-            self._rotate_proxy(proxy_group)
+            rotation_result = self._rotate_proxy(
+                proxy_group,
+                stop_checker=_stopped,
+                stop_label=f"{profile_id} proxy rotation settle wait",
+            )
+            if rotation_result is None:
+                self._release_proxy_group(proxy_group, profile_id)
+                self.app.after(0, self._log,
+                    f"[{profile_id}] Warmup stopped during proxy rotation")
+                self.app.after(0, self._on_warmup_complete, profile_id,
+                               _warmup_fail_stats(
+                                   "stopped",
+                                   "stop requested during proxy rotation settle wait",
+                               ))
+                return
+            if not rotation_result:
+                self.app.after(0, self._log,
+                    f"[{profile_id}] Proxy rotation failed for {proxy_group}; aborting warmup")
+                self._release_proxy_group(proxy_group, profile_id)
+                self.app.after(0, self._on_warmup_complete, profile_id,
+                               _warmup_fail_stats(
+                                   "proxy_rotation_failed",
+                                   f"{proxy_group} rotation URL failed or missing",
+                               ))
+                return
 
-        def _stopped():
-            return entry.get("stop", False)
+        if _stopped():
+            if proxy_group:
+                self._release_proxy_group(proxy_group, profile_id)
+            self.app.after(0, self._log,
+                           f"[{profile_id}] Warmup stopped before browser start")
+            self.app.after(0, self._on_warmup_complete, profile_id,
+                           _warmup_fail_stats(
+                               "stopped",
+                               "stop requested before browser start",
+                           ))
+            return
 
         # 1. Start AdsPower browser
         self.app.after(0, self._log, f"[{profile_id}] Starting AdsPower browser...")
@@ -3469,16 +3859,45 @@ class AutoPosterTab:
                 f"?user_id={profile_id}&api_key={api_key}",
                 timeout=60,
             )
-            data = resp.json()
+            try:
+                data = resp.json()
+            except Exception as e:
+                stats = _warmup_fail_stats(
+                    "adspower_bad_response",
+                    f"browser/start returned invalid JSON ({e})",
+                )
+                self.app.after(0, self._log,
+                    f"[{profile_id}] AdsPower error: invalid JSON response: {e}")
+                return
+            if not isinstance(data, dict):
+                stats = _warmup_fail_stats(
+                    "adspower_bad_response",
+                    f"browser/start returned non-dict JSON ({type(data).__name__})",
+                )
+                self.app.after(0, self._log,
+                    f"[{profile_id}] AdsPower error: unexpected payload: {data!r}")
+                return
             if data.get("code") != 0:
+                stats = _warmup_fail_stats("adspower_start_failed", str(data))
                 self.app.after(0, self._log, f"[{profile_id}] AdsPower error: {data}")
                 return
-            ws_endpoint = data.get("data", {}).get("ws", {}).get("puppeteer")
-            if not ws_endpoint:
-                self.app.after(0, self._log,
-                    f"[{profile_id}] AdsPower start returned no CDP endpoint")
-                return
+            # Treat code=0 as browser started even if CDP endpoint is missing,
+            # so the finally block still attempts AdsPower stop cleanup.
             browser_started = True
+            ws_endpoint, cdp_reason, cdp_detail = _adspower_cdp_endpoint(data)
+            if cdp_reason:
+                stats = _warmup_fail_stats(cdp_reason, cdp_detail)
+                self.app.after(0, self._log,
+                    f"[{profile_id}] AdsPower error: {cdp_detail}")
+                return
+            if _stopped():
+                stats = _warmup_fail_stats(
+                    "stopped",
+                    "stop requested after browser start before Playwright connect",
+                )
+                self.app.after(0, self._log,
+                    f"[{profile_id}] Warmup stopped before Playwright connect")
+                return
             self.app.after(0, self._log,
                 f"[{profile_id}] Browser started, connecting Playwright...")
 
@@ -3496,12 +3915,26 @@ class AutoPosterTab:
                             wait = 2 * (attempt + 1)
                             self.app.after(0, self._log,
                                 f"[{profile_id}] CDP not ready, retry in {wait}s...")
-                            time.sleep(wait)
+                            if not self._sleep_with_stop(
+                                    wait,
+                                    stop_checker=_stopped,
+                                    label=f"{profile_id} Playwright connect retry",
+                                    log_prefix=f"[{profile_id}]"):
+                                stats = _warmup_fail_stats(
+                                    "stopped",
+                                    "stop requested during Playwright connect retry",
+                                )
+                                return
                         else:
                             raise cdp_err
                 contexts = browser.contexts
                 ctx = contexts[0] if contexts else browser.new_context()
                 all_pages = list(ctx.pages) if ctx else []
+                def _page_is_closed(pg):
+                    try:
+                        return bool(pg.is_closed())
+                    except Exception:
+                        return False
 
                 # Pick a Reddit tab if one exists, otherwise use first tab
                 page = None
@@ -3511,19 +3944,24 @@ class AutoPosterTab:
                         url = pg.url or ""
                     except Exception:
                         url = ""
-                    if "reddit.com" in url:
+                    if "reddit.com" in url and not _page_is_closed(pg):
                         reddit_page = pg
                         break
 
                 if reddit_page:
                     page = reddit_page
                 elif all_pages:
-                    page = all_pages[0]
+                    for pg in all_pages:
+                        if not _page_is_closed(pg):
+                            page = pg
+                            break
                 else:
                     page = ctx.new_page()
 
                 if page is None:
-                    raise RuntimeError("No browser page available for warmup")
+                    page = ctx.new_page()
+                if page is None or _page_is_closed(page):
+                    raise RuntimeError("No live browser page available for warmup")
 
                 # Close stale extra tabs
                 closed = 0
@@ -3540,6 +3978,11 @@ class AutoPosterTab:
                     tab_msg += f" (closed {closed} stale tab{'s' if closed != 1 else ''})"
                 self.app.after(0, self._log, tab_msg)
                 if _stopped():
+                    stats = {
+                        "ok": False,
+                        "failure_reason": "stopped",
+                        "failure_detail": "stop requested before session start",
+                    }
                     self.app.after(0, self._log,
                         f"[{profile_id}] Warmup stopped before session start")
                     return
@@ -3616,7 +4059,7 @@ class AutoPosterTab:
                     entry.pop("handler", None)
 
                 # 6. Report
-                if stats:
+                if warmup_stats_ok(stats):
                     self._last_action_log = stats.get("action_log", [])
                     self.app.after(0, self._log,
                         f"\n=== WARMUP COMPLETE ({profile_id}) ===\n"
@@ -3645,8 +4088,22 @@ class AutoPosterTab:
                         except Exception as cqs_err:
                             self.app.after(0, self._log,
                                 f"[{profile_id}] CQS check error: {cqs_err}")
+                elif stats:
+                    if _warmup_was_stopped(stats):
+                        self.app.after(0, self._log,
+                            f"[{profile_id}] Warmup stopped: {_warmup_failure_text(stats)}")
+                    else:
+                        self.app.after(0, self._log,
+                            f"[{profile_id}] Warmup failed before session start: {_warmup_failure_text(stats)}")
 
         except Exception as e:
+            if stats is None:
+                if _stopped():
+                    stats = _warmup_fail_stats("stopped", "stop requested during warmup startup")
+                elif not browser_started:
+                    stats = _warmup_fail_stats("adspower_start_error", str(e))
+                else:
+                    stats = _warmup_fail_stats("warmup_worker_error", str(e))
             self.app.after(0, self._log, f"[{profile_id}] Warmup error: {e}")
         finally:
             # Clean up handler if still attached
@@ -3688,7 +4145,7 @@ class AutoPosterTab:
         else:
             self.warmup_btn.configure(text=f"Warmup ({n} running)")
 
-        if stats:
+        if warmup_stats_ok(stats):
             elapsed = stats.get("total_sec", 0)
             self.progress_label.configure(
                 text=f"Warmup done ({profile_id}) - {stats['sessions']} sessions, "
@@ -3696,8 +4153,13 @@ class AutoPosterTab:
                      f"{stats['upvotes']}up/{stats['downvotes']}down, "
                      f"{stats['comments']} comments")
         else:
-            self.progress_label.configure(
-                text=f"Warmup failed or stopped ({profile_id})")
+            if _warmup_was_stopped(stats):
+                self.progress_label.configure(
+                    text=f"Warmup stopped ({profile_id})")
+            else:
+                self.progress_label.configure(
+                    text=(f"Warmup failed ({profile_id}) - {_warmup_failure_text(stats)}"
+                          if stats else f"Warmup failed or stopped ({profile_id})"))
 
         # Refresh lifetime stats and account statuses
         self._refresh_life_stats(silent=True)
@@ -3709,6 +4171,7 @@ class AutoPosterTab:
         """Signal all campaigns and warmup to stop."""
         # Stop posting campaigns
         self.stop_all = True
+        self._posting_stop_requested = True
         for c in self.campaigns:
             c.stop_requested = True
             if c.warmer:
