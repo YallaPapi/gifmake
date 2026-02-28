@@ -1574,7 +1574,14 @@ class AccountWarmer:
 
         if should_hijack:
             # Try top 3 comments for a replyable one
+            reply = None
             for try_idx in range(3):
+                if not self._is_replyable_comment(try_idx):
+                    logger.info(
+                        f"  Skipping hijack target #{try_idx}: "
+                        "not replyable (stickied/mod/bot/locked)"
+                    )
+                    continue
                 comment_text = self._get_comment_text(try_idx)
                 if not comment_text:
                     continue
