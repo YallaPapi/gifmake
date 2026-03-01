@@ -23,7 +23,9 @@ from core.post_history import (
     get_all_warmup_stats, get_today_sessions, reset_today_warmup,
     get_daily_cap, get_daily_totals,
     record_karma, get_latest_karma,
+    record_warmup_attempt_start, record_warmup_attempt_finish,
 )
+from core.account_identity import extract_username_from_profile_name
 from processors.account_profile import (
     ProfileManager,
     AccountProfile,
@@ -165,6 +167,7 @@ ACCOUNT_PROFILES_PATH = os.path.join(
 
 # Run All constants
 PROXY_PREFIXES = ("P ", "G ", "F ", "4u ")
+BAN_SKIP_STATUSES = {"permaban", "shadowban", "suspected_deleted", "health_unknown"}
 BAN_LOG_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "data", "warmup_bans.json"
 )
@@ -193,6 +196,10 @@ PILL_COLORS = {
     "session":  ("#0F766E", "#14B8A6"),
     "time":     ("#475569", "#94A3B8"),
 }
+
+
+def _is_skip_ban_status(status):
+    return str(status or "").strip().lower() in BAN_SKIP_STATUSES
 
 
 def _make_pill(parent, value, label, color_key, width=82):
@@ -1159,7 +1166,7 @@ class WarmupTab:
                 clean = name
                 for pfx in PROXY_PREFIXES:
                     if name.startswith(pfx):
-                        clean = name[len(pfx):]
+                        clean = extract_username_from_profile_name(name, pfx) or name[len(pfx):]
                         break
                 username_map[ads_id] = clean
 
@@ -1182,8 +1189,7 @@ class WarmupTab:
     def _apply_stats_data(self, all_stats, warmed_today, today_sessions,
                           today_map, ban_log, username_map):
         """Main thread: update all UI widgets with fetched data."""
-        banned_ids = {k for k, v in ban_log.items()
-                      if v.get("status") == "permaban"}
+        banned_ids = self._skip_ban_ids(ban_log)
         active_stats = [s for s in all_stats
                         if s["profile_id"] not in banned_ids]
 
@@ -1269,8 +1275,7 @@ class WarmupTab:
         for w in self._acct_cards_frame.winfo_children():
             w.destroy()
 
-        banned_ids = {k for k, v in ban_log.items()
-                      if v.get("status") == "permaban"}
+        banned_ids = self._skip_ban_ids(ban_log)
         today_str = datetime.now().strftime("%Y-%m-%d")
 
         # Build row data
@@ -2225,8 +2230,12 @@ class WarmupTab:
     def _load_ban_log(self):
         """Load ban log from disk."""
         if os.path.exists(BAN_LOG_PATH):
-            with open(BAN_LOG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
+            try:
+                with open(BAN_LOG_PATH, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to read ban log {BAN_LOG_PATH}: {e}")
+                return {}
         return {}
 
     def _save_ban_log(self):
@@ -2237,6 +2246,25 @@ class WarmupTab:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._ban_log, f, indent=2)
             os.replace(tmp, BAN_LOG_PATH)
+
+    def _skip_ban_ids(self, ban_log=None):
+        """Return AdsPower IDs that should be skipped for safety."""
+        source = self._ban_log if ban_log is None else ban_log
+        return {
+            k for k, v in (source or {}).items()
+            if _is_skip_ban_status((v or {}).get("status"))
+        }
+
+    def _set_ban_status(self, adspower_id, status, username, group, detail):
+        """Upsert one account ban/quarantine status."""
+        with self._run_all_lock:
+            self._ban_log[adspower_id] = {
+                "status": status,
+                "username": username,
+                "proxy_group": group,
+                "detail": detail,
+                "detected": datetime.now().isoformat(),
+            }
 
     def _load_rotation_urls(self):
         """Load proxy rotation URLs from schedule_config.json."""
@@ -2301,13 +2329,12 @@ class WarmupTab:
                 for prefix in enabled_prefixes:
                     if name.startswith(prefix):
                         grp = prefix.strip()
-                        username = name[len(prefix):].strip()
-                        # Handle "P - reddit bot - Username" format
-                        if " - " in username:
-                            username = username.rsplit(" - ", 1)[-1].strip()
+                        username = extract_username_from_profile_name(name, prefix)
+                        if not username:
+                            username = name[len(prefix):].strip().lower()
                         by_group.setdefault(grp, []).append({
                             "name": name,
-                            "username": username.lower(),
+                            "username": username,
                             "adspower_id": item["user_id"],
                             "proxy_group": grp,
                         })
@@ -2501,18 +2528,17 @@ class WarmupTab:
             self.app.after(0, self._on_run_all_complete)
             return
 
-        # Collect active (non-banned) account IDs
+        # Collect active (non-flagged) account IDs
         all_account_ids = set()
         for accs in accounts_by_group.values():
             for acc in accs:
                 all_account_ids.add(acc["adspower_id"])
-        permabanned_ids = {k for k, v in self._ban_log.items()
-                           if v.get("status") == "permaban"}
-        active_ids = all_account_ids - permabanned_ids
+        skip_ids = self._skip_ban_ids(self._ban_log)
+        active_ids = all_account_ids - skip_ids
 
-        if permabanned_ids:
+        if skip_ids:
             self.app.after(0, self._log,
-                           f"Skipping {len(permabanned_ids)} permabanned accounts")
+                           f"Skipping {len(skip_ids)} flagged accounts")
         self.app.after(0, self._log,
                        f"Rotation URLs: {', '.join(self._rotation_urls.keys())}")
         self.app.after(0, self._log,
@@ -2655,9 +2681,11 @@ class WarmupTab:
         shuffled = list(accounts)
         random.shuffle(shuffled)
 
-        # Filter permabanned
+        # Filter skip-status accounts
         active = [a for a in shuffled
-                  if self._ban_log.get(a["adspower_id"], {}).get("status") != "permaban"]
+                  if not _is_skip_ban_status(
+                      self._ban_log.get(a["adspower_id"], {}).get("status")
+                  )]
 
         # Check daily caps — skip accounts already at their cap
         runnable = []
@@ -2778,12 +2806,46 @@ class WarmupTab:
         api_base = self.adspower_config.get(
             "adspower_api_base", "http://localhost:50325")
         api_key = self.adspower_config.get("api_key", "")
+        attempt_id = record_warmup_attempt_start(
+            profile_id=adspower_id,
+            adspower_id=adspower_id,
+            username=profile_key,
+            proxy_group=group,
+            source="gui_run_all",
+        )
 
-        # Skip if permabanned
+        def _finalize(result_status, detail="", stats=None, **payload):
+            record_warmup_attempt_finish(
+                attempt_id=attempt_id,
+                status=result_status,
+                detail=detail,
+                stats=stats,
+            )
+            out = {
+                "profile": profile_key,
+                "status": result_status,
+                "adspower_id": adspower_id,
+                "proxy_group": group,
+            }
+            out.update(payload)
+            if stats is not None:
+                out["stats"] = stats
+            if detail and "detail" not in out and result_status in {
+                "banned", "shadowbanned", "suspected_deleted", "health_unknown"
+            }:
+                out["detail"] = detail
+            if detail and "error" not in out and result_status in {
+                "failed", "error", "browser_crashed", "proxy_dead",
+                "no_feed", "warmup_failed", "stopped", "not_logged_in"
+            }:
+                out["error"] = detail
+            return out
+
+        # Skip if in ban/quarantine skip list
         prev = self._ban_log.get(adspower_id, {})
-        if prev.get("status") == "permaban":
-            return {"profile": profile_key, "status": "skip_banned",
-                    "adspower_id": adspower_id, "proxy_group": group}
+        if _is_skip_ban_status(prev.get("status")):
+            detail = f"{prev.get('status')} ({prev.get('detected', '?')})"
+            return _finalize("skip_banned", detail=detail)
 
         # Load optional profile data
         persona_data, attributes, age_days, created_at = self._load_profile_data(profile_key)
@@ -2801,20 +2863,14 @@ class WarmupTab:
             try:
                 data = resp.json()
             except Exception as e:
-                return {"profile": profile_key, "status": "failed",
-                        "adspower_id": adspower_id,
-                        "error": f"invalid AdsPower JSON: {e}"}
+                return _finalize("failed", detail=f"invalid AdsPower JSON: {e}")
         except Exception as e:
-            return {"profile": profile_key, "status": "failed",
-                    "adspower_id": adspower_id, "error": str(e)}
+            return _finalize("failed", detail=str(e))
 
         if not isinstance(data, dict):
-            return {"profile": profile_key, "status": "failed",
-                    "adspower_id": adspower_id,
-                    "error": f"non-dict AdsPower response ({type(data).__name__})"}
+            return _finalize("failed", detail=f"non-dict AdsPower response ({type(data).__name__})")
         if data.get("code") != 0:
-            return {"profile": profile_key, "status": "failed",
-                    "adspower_id": adspower_id, "error": str(data)}
+            return _finalize("failed", detail=str(data))
         # Treat code=0 as "browser may be live"; missing-CDP returns must stop
         # explicitly (they happen before the main try/finally below).
         browser_started = True
@@ -2831,8 +2887,7 @@ class WarmupTab:
             except Exception as e:
                 self.app.after(0, self._log,
                                f"  Failed to stop browser after invalid/missing CDP endpoint: {e}")
-            return {"profile": profile_key, "status": "failed",
-                    "adspower_id": adspower_id, "error": cdp_detail}
+            return _finalize("failed", detail=cdp_detail)
         _acct_start_ts = time.time()
 
         try:
@@ -2843,9 +2898,7 @@ class WarmupTab:
             if self._run_all_stop:
                 self.app.after(0, self._log,
                                "  Stop All requested before Playwright connect — skipping")
-                return {"profile": profile_key, "status": "stopped",
-                        "adspower_id": adspower_id, "proxy_group": group,
-                        "error": "stop requested before Playwright connect"}
+                return _finalize("stopped", detail="stop requested before Playwright connect")
             with sync_playwright() as p:
                 # CDP connection with retries
                 browser = None
@@ -2859,9 +2912,10 @@ class WarmupTab:
                             self.app.after(0, self._log,
                                            f"  CDP retry in {wait}s... ({e})")
                             if not self._run_all_sleep(wait, "Run All CDP retry wait"):
-                                return {"profile": profile_key, "status": "stopped",
-                                        "adspower_id": adspower_id, "proxy_group": group,
-                                        "error": "stop requested during Playwright connect retry"}
+                                return _finalize(
+                                    "stopped",
+                                    detail="stop requested during Playwright connect retry",
+                                )
                         else:
                             raise
 
@@ -2905,9 +2959,7 @@ class WarmupTab:
                 if self._run_all_stop:
                     self.app.after(0, self._log,
                                    "  Stop All requested before health check — skipping")
-                    return {"profile": profile_key, "status": "stopped",
-                            "adspower_id": adspower_id, "proxy_group": group,
-                            "error": "stop requested before warmup start"}
+                    return _finalize("stopped", detail="stop requested before warmup start")
 
                 # === BAN CHECK ===
                 self.app.after(0, self._log, "  Checking account health...")
@@ -2915,33 +2967,29 @@ class WarmupTab:
 
                 if status == BanStatus.ACCOUNT_SUSPENDED:
                     self.app.after(0, self._log, f"  BANNED: {detail}")
-                    with self._run_all_lock:
-                        self._ban_log[adspower_id] = {
-                            "status": "permaban", "username": profile_key,
-                            "proxy_group": group, "detail": detail,
-                            "detected": datetime.now().isoformat(),
-                        }
+                    self._set_ban_status(
+                        adspower_id, "permaban", profile_key, group, detail)
                     self._save_ban_log()
-                    return {"profile": profile_key, "status": "banned",
-                            "adspower_id": adspower_id, "detail": detail}
+                    return _finalize("banned", detail=detail)
+
+                if status == BanStatus.ACCOUNT_DELETED:
+                    self.app.after(0, self._log, f"  DELETED/SUSPENDED: {detail}")
+                    self._set_ban_status(
+                        adspower_id, "suspected_deleted", profile_key, group, detail)
+                    self._save_ban_log()
+                    return _finalize("suspected_deleted", detail=detail)
 
                 if status == BanStatus.SHADOW_BANNED:
                     self.app.after(0, self._log, f"  SHADOW BANNED: {detail}")
-                    with self._run_all_lock:
-                        self._ban_log[adspower_id] = {
-                            "status": "shadowban", "username": profile_key,
-                            "proxy_group": group, "detail": detail,
-                            "detected": datetime.now().isoformat(),
-                        }
+                    self._set_ban_status(
+                        adspower_id, "shadowban", profile_key, group, detail)
                     self._save_ban_log()
-                    return {"profile": profile_key, "status": "shadowbanned",
-                            "adspower_id": adspower_id, "detail": detail}
+                    return _finalize("shadowbanned", detail=detail)
 
                 if status == BanStatus.UNKNOWN_ERROR:
                     if "not logged in" in detail:
                         self.app.after(0, self._log, "  NOT LOGGED IN â€” skipping")
-                        return {"profile": profile_key, "status": "not_logged_in",
-                                "adspower_id": adspower_id, "proxy_group": group}
+                        return _finalize("not_logged_in", detail=detail)
                     crash_phrases = [
                         "browser has been closed", "target page",
                         "connection closed", "target closed",
@@ -2949,10 +2997,13 @@ class WarmupTab:
                     ]
                     if any(phrase in detail.lower() for phrase in crash_phrases):
                         self.app.after(0, self._log, f"  BROWSER CRASHED: {detail}")
-                        return {"profile": profile_key, "status": "browser_crashed",
-                                "adspower_id": adspower_id, "error": detail}
+                        return _finalize("browser_crashed", detail=detail)
+                    self._set_ban_status(
+                        adspower_id, "health_unknown", profile_key, group, detail)
+                    self._save_ban_log()
                     self.app.after(0, self._log,
-                                   f"  Health check issue: {detail} â€” proceeding")
+                                   f"  Health check failed closed: {detail}")
+                    return _finalize("health_unknown", detail=detail)
 
                 self.app.after(0, self._log, f"  Account healthy: {detail}")
 
@@ -3023,9 +3074,7 @@ class WarmupTab:
                     log_prefix = "  WARMUP STOPPED" if status_name == "stopped" else "  WARMUP FAILED"
                     self.app.after(0, self._log,
                                    f"{log_prefix}: {_warmup_failure_text(stats)}")
-                    return {"profile": profile_key, "status": status_name,
-                            "adspower_id": adspower_id, "proxy_group": group,
-                            "error": detail or reason, "stats": stats}
+                    return _finalize(status_name, detail=detail or reason, stats=stats)
 
                 self.app.after(0, self._log,
                                f"  DONE â€” {stats['comments']}cmt, {stats['upvotes']}up, "
@@ -3038,9 +3087,7 @@ class WarmupTab:
                         del self._ban_log[adspower_id]
                 self._save_ban_log()
 
-                return {"profile": profile_key, "status": "success",
-                        "adspower_id": adspower_id, "proxy_group": group,
-                        "stats": stats}
+                return _finalize("success", stats=stats)
 
         except Exception as e:
             err_str = str(e).lower()
@@ -3049,11 +3096,9 @@ class WarmupTab:
                              "session closed", "page has been closed"]
             if any(phrase in err_str for phrase in crash_phrases):
                 self.app.after(0, self._log, f"  BROWSER CRASHED: {e}")
-                return {"profile": profile_key, "status": "browser_crashed",
-                        "adspower_id": adspower_id, "error": str(e)}
+                return _finalize("browser_crashed", detail=str(e))
             self.app.after(0, self._log, f"  Warmup error: {e}")
-            return {"profile": profile_key, "status": "error",
-                    "adspower_id": adspower_id, "error": str(e)}
+            return _finalize("error", detail=str(e))
         finally:
             # Defensive cleanup: clear stale warmer ref if an exception skipped inner finally.
             with self._run_all_lock:
@@ -3145,9 +3190,8 @@ class WarmupTab:
 
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
-            # Build flat list of non-banned accounts
-            banned_ids = {k for k, v in self._ban_log.items()
-                          if v.get("status") == "permaban"}
+            # Build flat list of non-flagged accounts
+            banned_ids = self._skip_ban_ids(self._ban_log)
             all_accounts = []
             for grp, accs in accounts_by_group.items():
                 for acc in accs:
@@ -3162,6 +3206,7 @@ class WarmupTab:
 
             checked = 0
             errors = 0
+            updated_ban_log = False
             for i, acc in enumerate(all_accounts):
                 username = acc["username"]
                 try:
@@ -3180,6 +3225,12 @@ class WarmupTab:
                         record_karma(acc["adspower_id"], username, ck, lk,
                                      tk, age_days, int(created))
                         checked += 1
+                    elif resp.status_code == 404:
+                        self._set_ban_status(
+                            acc["adspower_id"], "suspected_deleted", username,
+                            acc["proxy_group"], "about.json returned 404")
+                        updated_ban_log = True
+                        errors += 1
                     else:
                         errors += 1
                 except Exception:
@@ -3187,6 +3238,9 @@ class WarmupTab:
 
                 if i < len(all_accounts) - 1:
                     time.sleep(2)
+
+            if updated_ban_log:
+                self._save_ban_log()
 
             self.app.after(0, self._log,
                            f"--- Karma check done: {checked} recorded, {errors} errors ---")
@@ -3228,9 +3282,9 @@ class WarmupTab:
                 self.app.after(0, self._log, "No accounts found")
                 return
 
-            # Load ban log to skip banned accounts
+            # Load ban log to skip flagged accounts
             ban_log = self._load_ban_log()
-            banned_ids = {k for k, v in ban_log.items() if v.get("status") == "permaban"}
+            banned_ids = self._skip_ban_ids(ban_log)
 
             all_accounts = []
             for grp, accs in sorted(accounts.items()):
@@ -3242,6 +3296,7 @@ class WarmupTab:
                            f"Checking karma for {len(all_accounts)} active accounts...")
 
             results = []
+            ban_log_dirty = False
             for i, acc in enumerate(all_accounts):
                 username = acc["username"]
                 try:
@@ -3255,6 +3310,14 @@ class WarmupTab:
                             "username": username, "group": acc["proxy_group"],
                             "adspower_id": acc["adspower_id"],
                             "status": "NOT FOUND", "total_karma": 0})
+                        ban_log[acc["adspower_id"]] = {
+                            "status": "suspected_deleted",
+                            "username": username,
+                            "proxy_group": acc["proxy_group"],
+                            "detail": "about.json returned 404",
+                            "detected": datetime.now().isoformat(),
+                        }
+                        ban_log_dirty = True
                         self.app.after(0, self._log,
                                        f"  {username}: NOT FOUND (suspended/deleted?)")
                     elif resp.status_code == 200:
@@ -3289,6 +3352,11 @@ class WarmupTab:
                 # Rate limit: 1 req per 2 seconds
                 if i < len(all_accounts) - 1:
                     time.sleep(2)
+
+            if ban_log_dirty:
+                with self._run_all_lock:
+                    self._ban_log = ban_log
+                self._save_ban_log()
 
             # Print summary sorted by karma
             results.sort(key=lambda r: r.get("total_karma", 0), reverse=True)
@@ -3385,7 +3453,7 @@ class WarmupTab:
         self._log(f"  Accounts at daily cap: {capped_count}")
         for status, names in sorted(by_status.items()):
             self._log(f"  {status}: {len(names)}")
-            if status in ("banned", "shadowbanned", "not_logged_in",
+            if status in ("banned", "shadowbanned", "suspected_deleted", "health_unknown", "not_logged_in",
                           "browser_crashed", "error",
                           "proxy_dead", "no_feed", "warmup_failed", "stopped"):
                 for n in names:
@@ -3398,7 +3466,12 @@ class WarmupTab:
 
         total = len(all_results)
         success = len(by_status.get("success", []))
-        banned = len(by_status.get("banned", []))
+        banned = (
+            len(by_status.get("banned", []))
+            + len(by_status.get("shadowbanned", []))
+            + len(by_status.get("suspected_deleted", []))
+            + len(by_status.get("health_unknown", []))
+        )
         capped = capped_count
         self._run_all_overall_label.configure(
             text=(
@@ -3423,10 +3496,11 @@ class WarmupTab:
         # Update overall label
         done_all = 0
         banned_all = 0
+        flagged_statuses = {"banned", "shadowbanned", "suspected_deleted", "health_unknown"}
         with self._run_all_lock:
             group_results_snapshot = [list(results) for results in self._group_results.values()]
         for results in group_results_snapshot:
             done_all += len(results)
-            banned_all += sum(1 for r in results if r.get("status") == "banned")
+            banned_all += sum(1 for r in results if r.get("status") in flagged_statuses)
         self._run_all_overall_label.configure(
             text=f"Running â€” {done_all} done, {banned_all} banned")

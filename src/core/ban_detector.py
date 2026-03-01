@@ -50,6 +50,13 @@ ACCOUNT_SUSPENDED_PATTERNS = [
     "account suspended",
 ]
 
+ACCOUNT_DELETED_PATTERNS = [
+    "sorry, nobody on reddit goes by that name",
+    "nobody on reddit goes by that name",
+    "this page is no longer available",
+    "page not found",
+]
+
 RATE_LIMIT_PATTERNS = [
     "you are doing that too much",
     "try again in",
@@ -68,6 +75,7 @@ class BanStatus:
     OK = "ok"
     SUB_BANNED = "sub_banned"
     ACCOUNT_SUSPENDED = "account_suspended"
+    ACCOUNT_DELETED = "account_deleted"
     RATE_LIMITED = "rate_limited"
     SHADOW_BANNED = "shadow_banned"
     UNKNOWN_ERROR = "unknown_error"
@@ -159,6 +167,7 @@ def check_account_health(page):
         (status, detail) tuple:
             - ("ok", username) if account is healthy
             - ("account_suspended", reason) if suspended
+            - ("account_deleted", reason) if profile is deleted/inaccessible
             - ("shadow_banned", reason) if likely shadow banned
             - ("unknown_error", reason) if can't determine
     """
@@ -193,6 +202,24 @@ def check_account_health(page):
                         break
         except Exception:
             pass
+
+        # Fallback: derive from profile links in the page DOM.
+        if not username:
+            try:
+                candidate = page.evaluate("""() => {
+                    const anchors = Array.from(document.querySelectorAll('a[href*="/user/"]'));
+                    for (const a of anchors) {
+                        const href = (a.getAttribute('href') || '').trim();
+                        if (!href) continue;
+                        const m = href.match(/\\/user\\/([^/?#]+)/i);
+                        if (m && m[1]) return m[1];
+                    }
+                    return '';
+                }""")
+                if candidate:
+                    username = str(candidate).replace("u/", "").strip()
+            except Exception:
+                pass
 
         # Fallback: check if login/signup buttons are prominent (= not logged in)
         if not username:
@@ -230,6 +257,11 @@ def check_account_health(page):
                     _dump_page(page, f"suspended_{username}")
                     return BanStatus.ACCOUNT_SUSPENDED, f"{username}: suspended-snoo image detected"
 
+                for pattern in ACCOUNT_DELETED_PATTERNS:
+                    if pattern in profile_text:
+                        _dump_page(page, f"deleted_{username}")
+                        return BanStatus.ACCOUNT_DELETED, f"{username}: {pattern}"
+
                 has_content = page.locator('shreddit-post, [data-testid="post-container"]').count() > 0
                 has_karma = "karma" in profile_text
                 if not has_content and not has_karma and "sorry" in profile_text:
@@ -237,11 +269,13 @@ def check_account_health(page):
                     return BanStatus.ACCOUNT_SUSPENDED, f"{username}: empty profile with sorry text"
             except Exception as e:
                 logger.debug(f"Profile check failed for {username}: {e}")
+                return BanStatus.UNKNOWN_ERROR, f"profile check failed for {username}: {e}"
 
             return BanStatus.OK, username
 
-        # No username found but no login redirect either — assume OK
-        return BanStatus.OK, "logged in"
+        # Fail closed: if we cannot identify a username reliably, do not proceed.
+        _dump_page(page, "health_unknown_no_username")
+        return BanStatus.UNKNOWN_ERROR, "could not determine logged-in username"
 
     except Exception as e:
         return BanStatus.UNKNOWN_ERROR, str(e)

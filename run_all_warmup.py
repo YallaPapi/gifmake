@@ -4,7 +4,7 @@ Safety architecture:
   - 4 proxy groups (P, G, F, 4u), each with a shared IP
   - 1 thread per group → only 1 account per proxy is ever active
   - Proxy IP rotated between accounts within the same group
-  - Ban check before each warmup; permabans logged and auto-skipped
+  - Ban/health check before each warmup; flagged accounts auto-skipped
 
 Pulls all reddit bot profiles from AdsPower API automatically.
 """
@@ -22,6 +22,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Ensure working directory is the script's directory (critical for scheduled tasks)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, "src")
+from core.account_identity import extract_username_from_profile_name
+from core.post_history import record_warmup_attempt_start, record_warmup_attempt_finish
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(message)s",
@@ -63,6 +66,11 @@ PROXY_PREFIXES = ("P ", "G ", "F ", "4u ")
 BAN_LOG_PATH = os.path.join("data", "warmup_bans.json")
 SCHEDULE_CONFIG_PATH = os.path.join("config", "schedule_config.json")
 BAN_LOG_LOCK = threading.RLock()
+BAN_SKIP_STATUSES = {"permaban", "shadowban", "suspected_deleted", "health_unknown"}
+
+
+def _is_skip_status(value):
+    return str(value or "").strip().lower() in BAN_SKIP_STATUSES
 
 
 def close_all_browsers():
@@ -215,10 +223,12 @@ def discover_accounts():
             for prefix in PROXY_PREFIXES:
                 if name.startswith(prefix):
                     grp = prefix.strip()
-                    username = name[len(prefix):].strip()
+                    username = extract_username_from_profile_name(name, prefix)
+                    if not username:
+                        username = name[len(prefix):].strip().lower()
                     by_group.setdefault(grp, []).append({
                         "name": name,
-                        "username": username.lower(),
+                        "username": username,
                         "adspower_id": item["user_id"],
                         "proxy_group": grp,
                     })
@@ -299,14 +309,47 @@ def warmup_one(account, ban_log, rotation_urls):
     adspower_id = account["adspower_id"]
     grp = account["proxy_group"]
     log = logging.getLogger(f"{grp}:{profile_key}")
+    attempt_id = record_warmup_attempt_start(
+        profile_id=adspower_id,
+        adspower_id=adspower_id,
+        username=profile_key,
+        proxy_group=grp,
+        source="run_all_warmup",
+    )
 
-    # Skip if permanently banned
+    def _finalize(result_status, detail="", stats=None, **payload):
+        record_warmup_attempt_finish(
+            attempt_id=attempt_id,
+            status=result_status,
+            detail=detail,
+            stats=stats,
+        )
+        out = {
+            "profile": profile_key,
+            "status": result_status,
+            "adspower_id": adspower_id,
+            "proxy_group": grp,
+        }
+        out.update(payload)
+        if stats is not None:
+            out["stats"] = stats
+        if detail and "detail" not in out and result_status in {
+            "banned", "shadowbanned", "suspected_deleted", "health_unknown"
+        }:
+            out["detail"] = detail
+        if detail and "error" not in out and result_status in {
+            "failed", "error", "browser_crashed", "proxy_failed"
+        }:
+            out["error"] = detail
+        return out
+
+    # Skip if account is in ban/quarantine skip list
     with BAN_LOG_LOCK:
         prev = dict(ban_log.get(adspower_id, {}))
-    if prev.get("status") == "permaban":
-        log.info(f"SKIP — permabanned ({prev.get('detected', '?')})")
-        return {"profile": profile_key, "status": "skip_banned",
-                "adspower_id": adspower_id, "proxy_group": grp}
+    if _is_skip_status(prev.get("status")):
+        detail = f"{prev.get('status')} ({prev.get('detected', '?')})"
+        log.info(f"SKIP — {detail}")
+        return _finalize("skip_banned", detail=detail)
 
     # Load optional profile data
     persona_data, attributes, age_days, created_at = load_profile_data(profile_key)
@@ -322,13 +365,11 @@ def warmup_one(account, ban_log, rotation_urls):
         data = resp.json()
     except Exception as e:
         log.error(f"Failed to start browser: {e}")
-        return {"profile": profile_key, "status": "failed",
-                "adspower_id": adspower_id, "error": str(e)}
+        return _finalize("failed", detail=str(e))
 
     if data.get("code") != 0:
         log.error(f"Browser start failed: {data}")
-        return {"profile": profile_key, "status": "failed",
-                "adspower_id": adspower_id, "error": str(data)}
+        return _finalize("failed", detail=str(data))
     ws_endpoint = data["data"]["ws"]["puppeteer"]
 
     from playwright.sync_api import sync_playwright
@@ -388,8 +429,18 @@ def warmup_one(account, ban_log, rotation_urls):
                         "detected": datetime.now().isoformat(),
                     }
                 save_ban_log(ban_log)
-                return {"profile": profile_key, "status": "banned",
-                        "adspower_id": adspower_id, "detail": detail}
+                return _finalize("banned", detail=detail)
+
+            if status == BanStatus.ACCOUNT_DELETED:
+                log.warning(f"DELETED/SUSPENDED: {detail}")
+                with BAN_LOG_LOCK:
+                    ban_log[adspower_id] = {
+                        "status": "suspected_deleted", "username": profile_key,
+                        "proxy_group": grp, "detail": detail,
+                        "detected": datetime.now().isoformat(),
+                    }
+                save_ban_log(ban_log)
+                return _finalize("suspected_deleted", detail=detail)
 
             if status == BanStatus.SHADOW_BANNED:
                 log.warning(f"SHADOW BANNED: {detail}")
@@ -400,14 +451,12 @@ def warmup_one(account, ban_log, rotation_urls):
                         "detected": datetime.now().isoformat(),
                     }
                 save_ban_log(ban_log)
-                return {"profile": profile_key, "status": "shadowbanned",
-                        "adspower_id": adspower_id, "detail": detail}
+                return _finalize("shadowbanned", detail=detail)
 
             if status == BanStatus.UNKNOWN_ERROR:
                 if "not logged in" in detail:
                     log.warning("NOT LOGGED IN — skipping")
-                    return {"profile": profile_key, "status": "not_logged_in",
-                            "adspower_id": adspower_id, "proxy_group": grp}
+                    return _finalize("not_logged_in", detail=detail)
                 # Detect browser/page crash — AdsPower profile is broken
                 crash_phrases = [
                     "browser has been closed",
@@ -419,10 +468,16 @@ def warmup_one(account, ban_log, rotation_urls):
                 ]
                 if any(phrase in detail.lower() for phrase in crash_phrases):
                     log.warning(f"BROWSER CRASHED: {detail}")
-                    return {"profile": profile_key, "status": "browser_crashed",
-                            "adspower_id": adspower_id, "proxy_group": grp,
-                            "error": detail}
-                log.warning(f"Health check issue: {detail} — proceeding anyway")
+                    return _finalize("browser_crashed", detail=detail)
+                with BAN_LOG_LOCK:
+                    ban_log[adspower_id] = {
+                        "status": "health_unknown", "username": profile_key,
+                        "proxy_group": grp, "detail": detail,
+                        "detected": datetime.now().isoformat(),
+                    }
+                save_ban_log(ban_log)
+                log.warning(f"Health check failed closed: {detail}")
+                return _finalize("health_unknown", detail=detail)
 
             log.info(f"Account healthy: {detail}")
 
@@ -446,9 +501,7 @@ def warmup_one(account, ban_log, rotation_urls):
             if failure_reason:
                 detail = _first_network_error_text(stats) or failure_reason
                 log.warning(f"WARMUP FAILED ({failure_reason}) — {detail}")
-                return {"profile": profile_key, "status": "proxy_failed",
-                        "adspower_id": adspower_id, "proxy_group": grp,
-                        "error": detail, "stats": stats}
+                return _finalize("proxy_failed", detail=detail, stats=stats)
 
             log.info(f"DONE — {stats['comments']}cmt, {stats['upvotes']}up, "
                      f"{stats['joins']}join, {stats['total_sec']//60}m")
@@ -459,9 +512,7 @@ def warmup_one(account, ban_log, rotation_urls):
                     del ban_log[adspower_id]
                     save_ban_log(ban_log)
 
-            return {"profile": profile_key, "status": "success",
-                    "adspower_id": adspower_id, "proxy_group": grp,
-                    "stats": stats}
+            return _finalize("success", stats=stats)
 
     except Exception as e:
         err_str = str(e).lower()
@@ -469,11 +520,9 @@ def warmup_one(account, ban_log, rotation_urls):
                          "target closed", "session closed", "page has been closed"]
         if any(phrase in err_str for phrase in crash_phrases):
             log.warning(f"BROWSER CRASHED during warmup: {e}")
-            return {"profile": profile_key, "status": "browser_crashed",
-                    "adspower_id": adspower_id, "proxy_group": grp, "error": str(e)}
+            return _finalize("browser_crashed", detail=str(e))
         log.error(f"Warmup error: {e}", exc_info=True)
-        return {"profile": profile_key, "status": "error",
-                "adspower_id": adspower_id, "proxy_group": grp, "error": str(e)}
+        return _finalize("error", detail=str(e))
     finally:
         # 1. Close the browser FIRST
         try:
@@ -512,8 +561,8 @@ def run_group(group, accounts, ban_log, rotation_urls):
 
     with BAN_LOG_LOCK:
         active = [a for a in shuffled
-                  if ban_log.get(a["adspower_id"], {}).get("status") != "permaban"]
-    log.info(f"Starting {group}: {len(active)} accounts ({len(accounts) - len(active)} permabanned)")
+                  if not _is_skip_status(ban_log.get(a["adspower_id"], {}).get("status"))]
+    log.info(f"Starting {group}: {len(active)} accounts ({len(accounts) - len(active)} skipped)")
 
     for i, acc in enumerate(active):
         result = warmup_one(acc, ban_log, rotation_urls)
@@ -529,8 +578,8 @@ def run_group(group, accounts, ban_log, rotation_urls):
 
         results.append(result)
 
-        if status == "banned":
-            log.warning(f"{acc['username']}: BANNED — continuing with remaining accounts")
+        if status in ("banned", "shadowbanned", "suspected_deleted", "health_unknown"):
+            log.warning(f"{acc['username']}: {status} — continuing with remaining accounts")
 
     log.info(f"Group {group} done: {len(results)} accounts processed")
     return results
@@ -556,9 +605,9 @@ if __name__ == "__main__":
     ban_log = load_ban_log()
     rotation_urls = load_proxy_rotation_urls()
 
-    permabanned = sum(1 for v in ban_log.values() if v.get("status") == "permaban")
-    if permabanned:
-        logger.info(f"Skipping {permabanned} previously permabanned accounts")
+    skipped_known = sum(1 for v in ban_log.values() if _is_skip_status(v.get("status")))
+    if skipped_known:
+        logger.info(f"Skipping {skipped_known} previously flagged accounts")
 
     logger.info(f"Rotation URLs loaded for: {', '.join(rotation_urls.keys())}")
     logger.info("Architecture: 1 thread per proxy group, sequential within group")
@@ -598,15 +647,16 @@ if __name__ == "__main__":
 
     for status, names in sorted(by_status.items()):
         logger.info(f"  {status}: {len(names)}")
-        if status in ("banned", "shadowbanned", "not_logged_in", "browser_crashed", "error", "proxy_failed"):
+        if status in ("banned", "shadowbanned", "suspected_deleted", "health_unknown",
+                      "not_logged_in", "browser_crashed", "error", "proxy_failed"):
             for n in names:
                 logger.info(f"    - {n}")
 
     # Final ban log save
     save_ban_log(ban_log)
-    total_banned = sum(1 for v in ban_log.values() if v.get("status") == "permaban")
+    total_banned = sum(1 for v in ban_log.values() if _is_skip_status(v.get("status")))
     total_accounts = sum(len(a) for a in accounts_by_group.values())
-    logger.info(f"Total: {total_accounts} accounts, {total_banned} permabanned")
+    logger.info(f"Total: {total_accounts} accounts, {total_banned} skipped/flagged")
 
     # Save daily results JSON for reporting
     report_dir = os.path.join("data", "warmup_reports")
@@ -616,6 +666,7 @@ if __name__ == "__main__":
         "timestamp": datetime.now().isoformat(),
         "total_accounts": total_accounts,
         "total_permabanned": total_banned,
+        "total_flagged": total_banned,
         "by_status": {s: names for s, names in by_status.items()},
         "results": all_results,
     }

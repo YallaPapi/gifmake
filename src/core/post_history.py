@@ -5,6 +5,7 @@ Tracks what content was posted where, prevents duplicates, tracks bans.
 import os
 import random
 import sqlite3
+import json
 from datetime import datetime, timedelta
 
 DB_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
@@ -112,6 +113,26 @@ def _init_tables(conn):
 
         CREATE INDEX IF NOT EXISTS idx_ws_profile_date
             ON warmup_sessions(profile_id, date);
+
+        CREATE TABLE IF NOT EXISTS warmup_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id TEXT NOT NULL,
+            adspower_id TEXT,
+            username TEXT,
+            proxy_group TEXT,
+            source TEXT,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            status TEXT NOT NULL DEFAULT 'running',
+            detail TEXT,
+            stats_json TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_attempts_started
+            ON warmup_attempts(started_at);
+
+        CREATE INDEX IF NOT EXISTS idx_attempts_profile
+            ON warmup_attempts(profile_id, started_at);
 
         CREATE TABLE IF NOT EXISTS karma_checks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -607,6 +628,53 @@ def record_session(profile_id, started_at, finished_at, stats):
              stats.get("posts_clicked", 0), stats.get("subs_browsed", 0),
              stats.get("sessions", 0), stats.get("scrolls", 0),
              stats.get("total_sec", 0))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_warmup_attempt_start(profile_id, adspower_id=None, username=None,
+                                proxy_group=None, source="run_all"):
+    """Record the start of a warmup attempt.
+
+    This is written before warmup execution so interrupted runs still leave
+    traceable attempt rows.
+    """
+    conn = _get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT INTO warmup_attempts
+               (profile_id, adspower_id, username, proxy_group, source,
+                started_at, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (profile_id, adspower_id, username, proxy_group, source,
+             datetime.now().isoformat(), "running")
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def record_warmup_attempt_finish(attempt_id, status, detail="", stats=None):
+    """Finalize a warmup attempt row with terminal status and optional stats."""
+    if attempt_id is None:
+        return
+    conn = _get_conn()
+    try:
+        stats_json = ""
+        if stats is not None:
+            try:
+                stats_json = json.dumps(stats, ensure_ascii=False)
+            except Exception:
+                stats_json = json.dumps({"error": "stats_not_serializable"})
+        conn.execute(
+            """UPDATE warmup_attempts
+               SET finished_at=?, status=?, detail=?, stats_json=?
+               WHERE id=?""",
+            (datetime.now().isoformat(), str(status or "unknown"),
+             str(detail or "")[:1000], stats_json, int(attempt_id))
         )
         conn.commit()
     finally:
