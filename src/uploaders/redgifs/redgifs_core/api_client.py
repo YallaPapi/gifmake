@@ -81,11 +81,31 @@ class RedGifsAPIClient:
                                 "_raw": text
                             }
 
-                    # Логирование ошибок
-                    if resp.status != 200:
-                        logger.debug(f"HTTP {resp.status}: {text[:300]}")
-
-                    resp.raise_for_status()
+                    # Normalize non-2xx responses into structured data instead of raising.
+                    if not (200 <= resp.status < 300):
+                        payload_preview = ""
+                        try:
+                            if json_data is not None:
+                                payload_preview = json.dumps(json_data, ensure_ascii=False)[:600]
+                        except Exception:
+                            payload_preview = str(json_data)[:600]
+                        logger.error(
+                            f"HTTP {resp.status} {method} {url}\n"
+                            f"Request payload: {payload_preview}\n"
+                            f"Response body: {text[:1200]}"
+                        )
+                        try:
+                            data = json.loads(text) if text else {}
+                        except json.JSONDecodeError:
+                            data = {}
+                        err = data.get("error")
+                        if not isinstance(err, dict):
+                            err = {"message": (text or f"HTTP {resp.status}")[:1200]}
+                        return {
+                            "status": resp.status,
+                            "error": err,
+                            "_raw": text
+                        }
 
                     # Парсинг JSON
                     if text:

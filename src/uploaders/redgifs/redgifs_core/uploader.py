@@ -1,6 +1,7 @@
 """Модуль загрузки видео на RedGifs"""
 
 import asyncio
+import subprocess
 from pathlib import Path
 from typing import Tuple, Optional
 
@@ -35,7 +36,8 @@ class VideoUploader:
         session: aiohttp.ClientSession,
         filepath: str,
         index: int,
-        total: int
+        total: int,
+        allow_gif_fallback: bool = True
     ) -> Tuple[str, str]:
         """
         Асинхронная загрузка одного видео
@@ -81,8 +83,27 @@ class VideoUploader:
                 await self._wait_for_processing(session, init_data, index)
 
             # Шаг 3: Submit
-            gif_id = await self._submit_video(session, filepath, upload_id, index)
+            gif_id, submit_error_code = await self._submit_video(session, filepath, upload_id, index)
             if gif_id is None:
+                # RedGIFs sometimes rejects uploaded GIF binaries as unprocessable.
+                # Automatically transcode GIF -> MP4 and retry once.
+                if (
+                    allow_gif_fallback
+                    and filepath.lower().endswith(".gif")
+                    and submit_error_code == "UploadFailed"
+                ):
+                    logger.warning(
+                        f"[Thread {index}] GIF upload was rejected by RedGIFs processing; "
+                        "retrying once as MP4 fallback"
+                    )
+                    fallback_mp4 = self._transcode_gif_to_mp4(filepath, index)
+                    return await self.upload_video(
+                        session,
+                        fallback_mp4,
+                        index,
+                        total,
+                        allow_gif_fallback=False
+                    )
                 return filename, "✗ Submit error"
 
             # Шаг 4: Ожидание encoding
@@ -164,7 +185,7 @@ class VideoUploader:
         filepath: str,
         upload_id: str,
         index: int
-    ) -> Optional[str]:
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Submit видео для финализации"""
         duration = get_video_duration(filepath)
         submit_payload = {
@@ -186,15 +207,46 @@ class VideoUploader:
         # Проверка на rate limit
         if submit_result.get("status") == 429:
             self._handle_rate_limit(submit_result, Path(filepath).name, index)
-            return None
+            return None, "RateLimit"
+
+        if submit_result.get("status") and int(submit_result.get("status")) >= 400:
+            err = submit_result.get("error", {})
+            err_code = err.get("code") if isinstance(err, dict) else None
+            err_msg = err.get("message") if isinstance(err, dict) else str(err)
+            logger.error(f"[Thread {index}] Submit failed: {err_code} - {err_msg}")
+            return None, err_code
 
         if "id" not in submit_result:
             logger.error(f"[Thread {index}] Invalid submit response: {submit_result}")
-            return None
+            return None, "InvalidSubmitResponse"
 
         gif_id = submit_result["id"]
         logger.info(f"[Thread {index}] [3/5] ✓ GIF ID: {gif_id}")
-        return gif_id
+        return gif_id, None
+
+    def _transcode_gif_to_mp4(self, gif_path: str, index: int) -> str:
+        """Create a temporary MP4 from GIF for fallback upload."""
+        src = Path(gif_path)
+        out = src.with_name(f"{src.stem}__fallback.mp4")
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", str(src),
+            "-vf", "fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "20",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            "-an",
+            str(out),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0 or not out.exists():
+            logger.error(f"[Thread {index}] GIF->MP4 fallback transcode failed: {result.stderr[:600]}")
+            raise RuntimeError("GIF fallback transcode failed")
+        logger.info(f"[Thread {index}] Created MP4 fallback: {out.name}")
+        return str(out)
 
     async def _wait_for_encoding(
         self,

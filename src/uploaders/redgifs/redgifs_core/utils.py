@@ -1,6 +1,7 @@
 """Вспомогательные утилиты для работы с файлами и форматирования"""
 
 import hashlib
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -26,7 +27,28 @@ def check_ffprobe_installed() -> bool:
         )
         return True
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return False
+        # ffprobe may be absent on some hosts even when ffmpeg is present.
+        try:
+            subprocess.run(
+                ["ffmpeg", "-version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5
+            )
+            return True
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            return False
+
+
+def _parse_ffmpeg_duration(output: str) -> Optional[float]:
+    """Parse ffmpeg duration line: Duration: HH:MM:SS.xx"""
+    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output or "")
+    if not m:
+        return None
+    hours = int(m.group(1))
+    minutes = int(m.group(2))
+    seconds = float(m.group(3))
+    return hours * 3600 + minutes * 60 + seconds
 
 
 def calculate_md5(filepath: str) -> str:
@@ -100,15 +122,33 @@ def get_video_duration(filepath: str) -> float:
         )
         return float(result.stdout.strip())
     except FileNotFoundError:
-        logger.error("ffprobe not found in system!")
+        # Fall back to ffmpeg output parsing.
+        pass
+    except (subprocess.TimeoutExpired, ValueError, OSError) as e:
+        logger.warning(f"ffprobe failed, trying ffmpeg fallback: {e}")
+
+    try:
+        ffmpeg_result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", filepath],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=15
+        )
+        duration = _parse_ffmpeg_duration(ffmpeg_result.stderr or ffmpeg_result.stdout)
+        if duration is not None:
+            return duration
+        raise ValueError("Could not parse duration from ffmpeg output")
+    except FileNotFoundError:
+        logger.error("ffprobe/ffmpeg not found in system!")
         logger.error("Install FFmpeg:")
         logger.error("  1. winget install FFmpeg")
         logger.error("  2. Or download from https://ffmpeg.org/download.html")
         raise RuntimeError(
-            "ffprobe is not installed. Install FFmpeg to get video duration."
+            "ffprobe/ffmpeg is not installed. Install FFmpeg to get video duration."
         )
     except (subprocess.TimeoutExpired, ValueError, OSError) as e:
-        logger.error(f"Error running ffprobe: {e}")
+        logger.error(f"Error getting video duration: {e}")
         raise
 
 

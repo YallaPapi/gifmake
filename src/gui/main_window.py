@@ -107,6 +107,16 @@ class GifMakeApp(ctk.CTk):
         "status_ok": ("#166534", "#4ADE80"),
     }
 
+    @staticmethod
+    def _clean_video_base(video_path: str) -> str:
+        """Normalize basename for outputs (e.g. IMG_9805.MOV.mp4 -> IMG_9805)."""
+        base = os.path.basename(video_path)
+        stem = os.path.splitext(base)[0]
+        second_stem, second_ext = os.path.splitext(stem)
+        if second_ext.lower() in GifMakeApp.VIDEO_EXTENSIONS:
+            return second_stem
+        return stem
+
     def __init__(self):
         super().__init__()
 
@@ -129,6 +139,7 @@ class GifMakeApp(ctk.CTk):
         self.video_path = None  # Single video path (for single mode)
         self.video_paths = []   # List of video paths (for bulk mode)
         self.video_durations = {}  # Map of video_path -> duration
+        self.bulk_scan_errors = []  # Per-file errors while probing duration
         self.video_duration = 0
         self.total_duration = 0  # Total duration for bulk mode
         self.is_processing = False
@@ -787,7 +798,7 @@ class GifMakeApp(ctk.CTk):
 
         self.account_label = ctk.CTkLabel(
             self.upload_settings_frame,
-            text="API Account:",
+            text="RedGIFs Account:",
             font=ctk.CTkFont(size=12),
         )
         self.account_label.grid(row=upload_row, column=0, sticky="w", padx=10, pady=5)
@@ -1215,6 +1226,7 @@ class GifMakeApp(ctk.CTk):
         """Scan a folder for video files and update the UI."""
         self.video_paths = []
         self.video_durations = {}
+        self.bulk_scan_errors = []
         self.total_duration = 0
 
         # Find all video files in the folder
@@ -1265,8 +1277,9 @@ class GifMakeApp(ctk.CTk):
                 try:
                     duration = get_video_duration(video_path)
                     self.video_durations[video_path] = duration
-                except Exception:
+                except Exception as e:
                     self.video_durations[video_path] = 0
+                    self.bulk_scan_errors.append(f"{os.path.basename(video_path)}: {e}")
 
             # Calculate total duration
             self.total_duration = sum(self.video_durations.values())
@@ -1290,8 +1303,9 @@ class GifMakeApp(ctk.CTk):
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                     )
                     self.video_durations[video_path] = float(result.stdout.strip())
-                except Exception:
+                except Exception as e:
                     self.video_durations[video_path] = 0
+                    self.bulk_scan_errors.append(f"{os.path.basename(video_path)}: {e}")
 
             self.total_duration = sum(self.video_durations.values())
             self.after(0, self._update_bulk_ui)
@@ -1301,25 +1315,33 @@ class GifMakeApp(ctk.CTk):
         # Update video count label
         self.video_count_label.configure(text=f"{len(self.video_paths)} files")
 
-        # Format total duration
-        total_minutes = int(self.total_duration // 60)
-        total_seconds = int(self.total_duration % 60)
-        duration_str = f"{total_minutes}:{total_seconds:02d}"
+        if self.total_duration > 0:
+            # Format total duration
+            total_minutes = int(self.total_duration // 60)
+            total_seconds = int(self.total_duration % 60)
+            duration_str = f"{total_minutes}:{total_seconds:02d}"
 
-        # Calculate total estimated GIFs
-        gif_duration = int(self.duration_slider.get())
-        total_estimated_gifs = sum(
-            max(1, int(d // gif_duration)) for d in self.video_durations.values()
-        )
+            # Calculate total estimated outputs
+            gif_duration = int(self.duration_slider.get())
+            total_estimated_gifs = sum(
+                max(1, int(d // gif_duration)) for d in self.video_durations.values()
+            )
 
-        self.duration_label.configure(
-            text=f"Duration: {duration_str} total | Estimated outputs: {total_estimated_gifs}"
-        )
+            self.duration_label.configure(
+                text=f"Duration: {duration_str} total | Estimated outputs: {total_estimated_gifs}"
+            )
+            self.status_label.configure(text="Status: Folder scan complete. Ready to generate.")
+        else:
+            self.duration_label.configure(text="Duration: unavailable | Estimated outputs: ?")
+            if self.bulk_scan_errors:
+                self.status_label.configure(
+                    text="Status: Could not detect durations. Check FFmpeg/ffprobe setup."
+                )
+            else:
+                self.status_label.configure(text="Status: Folder scan complete. Ready to generate.")
 
         # Populate video list
         self._populate_video_list()
-
-        self.status_label.configure(text="Status: Folder scan complete. Ready to generate.")
 
     def _clear_video_list(self):
         """Clear all items from the video list."""
@@ -1339,9 +1361,12 @@ class GifMakeApp(ctk.CTk):
             duration = self.video_durations.get(video_path, 0)
 
             # Format duration
-            minutes = int(duration // 60)
-            seconds = int(duration % 60)
-            duration_str = f"({minutes}:{seconds:02d})"
+            if duration > 0:
+                minutes = int(duration // 60)
+                seconds = int(duration % 60)
+                duration_str = f"({minutes}:{seconds:02d})"
+            else:
+                duration_str = "(??:??)"
 
             # Estimate GIFs for this video
             estimated_gifs = max(1, int(duration // gif_duration)) if duration > 0 else "?"
@@ -1560,11 +1585,18 @@ class GifMakeApp(ctk.CTk):
     def _load_browser_profiles(self):
         """Load AdsPower browser profiles into dropdown."""
         try:
+            default_cfg = {
+                "adspower_api_base": "http://127.0.0.1:50325",
+                "api_key": "",
+                "profiles": [],
+            }
             if os.path.exists(self._ADSPOWER_CONFIG):
                 with open(self._ADSPOWER_CONFIG, encoding="utf-8") as f:
                     self._adspower_cfg = json.load(f)
             else:
-                self._adspower_cfg = {"profiles": []}
+                self._adspower_cfg = {}
+            for k, v in default_cfg.items():
+                self._adspower_cfg.setdefault(k, v)
             profiles = self._adspower_cfg.get("profiles", [])
             if profiles:
                 options = [f"{p.get('account_name', '?')} ({p.get('profile_id', '?')})"
@@ -1581,8 +1613,24 @@ class GifMakeApp(ctk.CTk):
 
     def _save_adspower_config(self):
         """Persist AdsPower config to disk."""
+        if not isinstance(getattr(self, "_adspower_cfg", None), dict):
+            self._adspower_cfg = {}
+        self._adspower_cfg.setdefault("adspower_api_base", "http://127.0.0.1:50325")
+        self._adspower_cfg.setdefault("api_key", "")
+        self._adspower_cfg.setdefault("profiles", [])
         with open(self._ADSPOWER_CONFIG, "w", encoding="utf-8") as f:
             json.dump(self._adspower_cfg, f, indent=2)
+
+    def _get_selected_browser_profile(self):
+        """Return selected browser profile as (profile_id, account_name) or (None, None)."""
+        selected = (self.browser_profile_var.get() or "").strip()
+        if not selected or selected in ("No profiles", "Error"):
+            return None, None
+        if "(" in selected and selected.endswith(")"):
+            profile_id = selected.rsplit("(", 1)[-1].rstrip(")").strip()
+            account_name = selected.rsplit(" (", 1)[0].strip()
+            return profile_id or None, account_name or None
+        return None, selected
 
     def _add_browser_profile(self):
         """Dialog to add a new AdsPower browser profile."""
@@ -1706,7 +1754,7 @@ class GifMakeApp(ctk.CTk):
             from core.gif_generator import generate_gifs
 
             # Put output in a subfolder named after the video
-            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            video_name = self._clean_video_base(video_path)
             actual_output = os.path.join(output_folder, video_name)
             os.makedirs(actual_output, exist_ok=True)
 
@@ -1741,6 +1789,7 @@ class GifMakeApp(ctk.CTk):
             from core.gif_generator import generate_gifs
 
             all_gif_paths = []
+            failed_videos = []
             total_videos = len(video_paths)
 
             for video_index, video_path in enumerate(video_paths):
@@ -1748,7 +1797,7 @@ class GifMakeApp(ctk.CTk):
                 if not os.path.exists(video_path):
                     continue
 
-                video_filename = os.path.splitext(os.path.basename(video_path))[0]
+                video_filename = self._clean_video_base(video_path)
 
                 # Update bulk progress label on main thread
                 self.after(0, lambda vi=video_index, tv=total_videos, vf=video_filename:
@@ -1778,10 +1827,31 @@ class GifMakeApp(ctk.CTk):
                 except Exception as e:
                     # Log error but continue with next video
                     print(f"Error processing {video_path}: {e}")
+                    failed_videos.append((video_path, str(e)))
                     continue
 
+            if not all_gif_paths and failed_videos:
+                preview = "\n".join(
+                    f"- {os.path.basename(v)}: {err}" for v, err in failed_videos[:5]
+                )
+                more = ""
+                if len(failed_videos) > 5:
+                    more = f"\n...and {len(failed_videos) - 5} more failures."
+                error_msg = (
+                    "Bulk generation failed for all videos.\n\n"
+                    f"{preview}{more}\n\n"
+                    "Most common cause: missing FFmpeg/ffprobe."
+                )
+                self.after(0, lambda m=error_msg: self._on_error(m))
+                return
+
             # Signal completion on main thread
-            self.after(0, lambda: self._on_bulk_complete(all_gif_paths, output_folder, total_videos, output_format))
+            self.after(
+                0,
+                lambda fails=failed_videos: self._on_bulk_complete(
+                    all_gif_paths, output_folder, total_videos, output_format, fails
+                )
+            )
 
         except ImportError as e:
             error_msg = f"Missing module: {e}\n\nPlease ensure the core.gif_generator module is implemented."
@@ -1822,9 +1892,10 @@ class GifMakeApp(ctk.CTk):
         # Check if upload is enabled
         if self.upload_enabled and UPLOAD_AVAILABLE and self.selected_account and gif_paths:
             self.status_label.configure(text=f"Status: Generated {count} {format_name}. Starting upload...")
+            selected_profile_id, _ = self._get_selected_browser_profile()
             thread = threading.Thread(
                 target=self._upload_files_worker,
-                args=(gif_paths, self.selected_account.name, output_folder),
+                args=(gif_paths, self.selected_account.name, selected_profile_id, output_folder),
                 daemon=True
             )
             thread.start()
@@ -1843,11 +1914,12 @@ class GifMakeApp(ctk.CTk):
             if result == "yes":
                 self._open_folder(output_folder)
 
-    def _on_bulk_complete(self, gif_paths, output_folder, total_videos, output_format="gif"):
+    def _on_bulk_complete(self, gif_paths, output_folder, total_videos, output_format="gif", failed_videos=None):
         """Handle completion of bulk GIF/clip generation (called on main thread)."""
         self.progress_bar.set(1)
         self.bulk_progress_label.grid_remove()
 
+        failed_videos = failed_videos or []
         count = len(gif_paths) if gif_paths else 0
         format_name = "clips" if output_format == "mp4" else "GIFs"
         btn_text = self._default_generate_button_text()
@@ -1858,23 +1930,28 @@ class GifMakeApp(ctk.CTk):
         # Check if upload is enabled
         if self.upload_enabled and UPLOAD_AVAILABLE and self.selected_account and gif_paths:
             self.status_label.configure(text=f"Status: Generated {count} {format_name} from {total_videos} videos. Starting upload...")
+            selected_profile_id, _ = self._get_selected_browser_profile()
             thread = threading.Thread(
                 target=self._upload_files_worker,
-                args=(gif_paths, self.selected_account.name, output_folder),
+                args=(gif_paths, self.selected_account.name, selected_profile_id, output_folder),
                 daemon=True
             )
             thread.start()
         else:
             self.is_processing = False
             self.generate_btn.configure(state="normal", text=btn_text)
-            self.status_label.configure(
-                text=f"Status: Complete. Generated {count} {format_name} from {total_videos} videos."
-            )
+            status_text = f"Status: Complete. Generated {count} {format_name} from {total_videos} videos."
+            if failed_videos:
+                status_text += f" {len(failed_videos)} video(s) failed."
+            self.status_label.configure(text=status_text)
 
             # Show completion dialog
+            summary = f"Successfully generated {count} {format_name} from {total_videos} videos!"
+            if failed_videos:
+                summary += f"\n\nFailed videos: {len(failed_videos)}"
             result = messagebox.askquestion(
                 "Bulk Generation Complete",
-                f"Successfully generated {count} {format_name} from {total_videos} videos!\n\nEach video's {format_name} are in their own subfolder.\n\nWould you like to open the output folder?",
+                f"{summary}\n\nEach video's {format_name} are in their own subfolder.\n\nWould you like to open the output folder?",
                 icon="info"
             )
 
@@ -1891,12 +1968,10 @@ class GifMakeApp(ctk.CTk):
 
         messagebox.showerror("Error", f"An error occurred during processing:\n\n{error_msg}")
 
-    def _upload_files_worker(self, file_paths, account_name, output_folder):
+    def _upload_files_worker(self, file_paths, account_name, adspower_profile_id, output_folder):
         """Upload files after generation (runs in background thread)."""
+        bridge = None
         try:
-            # Refresh tokens
-            UploadBridge.refresh_tokens()
-
             # Get override settings from UI
             tags_text = self.tags_entry.get()
             tags = [t.strip() for t in tags_text.split(",")] if tags_text else []
@@ -1905,23 +1980,59 @@ class GifMakeApp(ctk.CTk):
                 "tags": tags,
                 "description": self.desc_textbox.get("1.0", "end").strip(),
                 "content_type": self.content_dropdown.get(),
-                "keep_audio": self.audio_checkbox.get()
+                "keep_audio": bool(self.audio_checkbox.get())
             }
 
-            bridge = UploadBridge(account_name, override_settings)
+            bridge = UploadBridge(
+                account_name,
+                override_settings,
+                adspower_profile_id=adspower_profile_id,
+            )
+
+            # API mode still uses bearer tokens; browser mode does not.
+            if adspower_profile_id:
+                self.after(
+                    0,
+                    lambda: self.status_label.configure(
+                        text=f"Status: Starting browser upload via profile {adspower_profile_id}..."
+                    )
+                )
+            else:
+                self.after(0, lambda: self.status_label.configure(text="Status: Refreshing RedGIFs token(s)..."))
+                refresh_ok = UploadBridge.refresh_tokens()
+                if not refresh_ok:
+                    self.after(
+                        0,
+                        lambda: self.status_label.configure(
+                            text="Status: Token refresh skipped/failed. Continuing with existing token(s)..."
+                        )
+                    )
 
             # Upload each file
             results = []
             for i, file_path in enumerate(file_paths, 1):
-                self.after(0, lambda c=i, t=len(file_paths):
-                    self.status_label.configure(text=f"Status: Uploading {c}/{t}..."))
+                mode_label = "Browser uploading" if adspower_profile_id else "Uploading"
+                self.after(
+                    0,
+                    lambda c=i, t=len(file_paths), m=mode_label:
+                        self.status_label.configure(text=f"Status: {m} {c}/{t}...")
+                )
 
-                result = asyncio.run(bridge.upload_single_file(file_path, i, len(file_paths)))
+                if adspower_profile_id:
+                    result = bridge.upload_single_file_browser_sync(file_path, i, len(file_paths))
+                else:
+                    result = asyncio.run(bridge.upload_single_file(file_path, i, len(file_paths)))
                 results.append(result)
 
             self.after(0, lambda: self._on_upload_complete(results, output_folder))
         except Exception as e:
             self.after(0, lambda: self._on_upload_error(str(e), output_folder))
+        finally:
+            try:
+                if bridge is not None:
+                    bridge.close()
+            except Exception:
+                pass
 
     def _on_upload_complete(self, results, output_folder):
         """Handle upload completion (called on main thread)."""
@@ -1934,9 +2045,18 @@ class GifMakeApp(ctk.CTk):
 
         # Show completion dialog
         if failed_count > 0:
+            error_lines = []
+            for r in results:
+                if r.get("success"):
+                    continue
+                msg = (r.get("error") or "Unknown error").replace("\n", " ").strip()
+                error_lines.append(f"- {r.get('filename', 'file')}: {msg[:120]}")
+                if len(error_lines) >= 3:
+                    break
+            extra = f"\n\nTop errors:\n" + "\n".join(error_lines) if error_lines else ""
             result = messagebox.askquestion(
                 "Upload Complete",
-                f"Upload complete!\n\nSuccessful: {success_count}\nFailed: {failed_count}\n\nWould you like to open the output folder?",
+                f"Upload complete!\n\nSuccessful: {success_count}\nFailed: {failed_count}{extra}\n\nWould you like to open the output folder?",
                 icon="warning"
             )
         else:
@@ -2023,5 +2143,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

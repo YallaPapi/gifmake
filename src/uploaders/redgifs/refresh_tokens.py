@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 SIMPLE RedGIFs token extractor - opens AdsPower profile, grabs bearer token from network, saves to accounts.json
 """
@@ -224,24 +224,33 @@ def extract_bearer_token(ws_url: str, chrome_version: str) -> Optional[str]:
         for url in api_urls[:10]:  # Log first 10
             logger.info(f"  - {url}")
 
-        # Look for user-authenticated endpoints (not client-only tokens)
-        # Prioritize /v1/me and upload endpoints as they have full user auth
-        user_endpoints = ['/v1/me', '/v2/users/', '/v2/upload', '/v2/gifs/']
+        # Look for user-authenticated endpoints (not client-only tokens).
+        # Tier 1: endpoints known to carry upload-capable user bearer tokens.
+        strict_user_endpoints = ['/v1/me', '/v2/users/', '/v2/upload', '/v2/gifs/']
+        # Tier 2: creator-studio authenticated calls (common on studio upload page).
+        studio_user_endpoints = ['/v2/creator-studio/me']
 
         for url, token in all_tokens.items():
-            if any(endpoint in url for endpoint in user_endpoints):
-                logger.info(f"✅ Found token from user endpoint: {url}")
+            if any(endpoint in url for endpoint in strict_user_endpoints):
+                logger.info(f"✅ Found token from strict user endpoint: {url}")
                 logger.info(f"✅ Token: {token[:20]}...")
                 return token
 
-        # Fallback: grab any api.redgifs.com token
-        if all_tokens:
-            url, token = list(all_tokens.items())[0]
-            logger.warning(f"No user endpoint token found, using token from: {url}")
-            logger.info(f"✅ Token: {token[:20]}...")
-            return token
+        for url, token in all_tokens.items():
+            if any(endpoint in url for endpoint in studio_user_endpoints):
+                logger.info(f"✅ Found token from creator-studio user endpoint: {url}")
+                logger.info(f"✅ Token: {token[:20]}...")
+                return token
 
-        logger.warning("No authorization header found in network traffic")
+        # Do not use arbitrary API tokens (temporary/geolocation tokens can be anonymous).
+        if all_tokens:
+            logger.warning(
+                "Found RedGIFs tokens, but none from authenticated user endpoints "
+                "(/v1/me, /v2/users/, /v2/upload, /v2/gifs/, /v2/creator-studio/me). "
+                "Skipping token update to avoid saving unusable temporary tokens."
+            )
+        else:
+            logger.warning("No authorization header found in network traffic")
         return None
 
     except Exception as e:
@@ -253,50 +262,80 @@ def extract_bearer_token(ws_url: str, chrome_version: str) -> Optional[str]:
         except:
             pass
 
-def main():
-    # Load config
+def main(profile_id: str = None, account_name: str = None):
+    # Load config (tolerate partial schema written by other GUI tabs)
     config = json.loads(Path("adspower_config.json").read_text())
-    api_base = config["adspower_api_base"]
-    api_key = config["api_key"]
-    profiles = config["profiles"]
+    api_base = config.get("adspower_api_base", "http://127.0.0.1:50325")
+    api_key = config.get("api_key", "")
+    profiles = config.get("profiles", [])
+
+    if not profiles:
+        logger.warning("No AdsPower profiles found in adspower_config.json")
+        return False
 
     # Load accounts
     accounts = json.loads(Path("accounts.json").read_text())
-    acc_map = {acc["name"]: acc for acc in accounts["accounts"]}
+    acc_map = {acc.get("name", ""): acc for acc in accounts.get("accounts", [])}
 
     client = SimpleAdsPower(api_base, api_key)
+    updated_count = 0
+
+    selected_profile_id = (profile_id or "").strip()
+    forced_account_name = (account_name or "").strip()
+
+    if selected_profile_id:
+        profiles = [p for p in profiles if str(p.get("profile_id", "")).strip() == selected_profile_id]
+        if not profiles:
+            logger.error(f"Requested profile_id '{selected_profile_id}' not found in adspower_config.json")
+            return False
 
     for profile in profiles:
-        profile_id = profile["profile_id"]
-        account_name = profile["account_name"]
+        current_profile_id = str(profile.get("profile_id", "")).strip()
+        mapped_account_name = str(profile.get("account_name", "")).strip()
+        current_account_name = forced_account_name or mapped_account_name
 
-        logger.info(f"Getting token for {account_name} ({profile_id})")
+        if not current_profile_id or not current_account_name:
+            logger.error(
+                f"Invalid profile entry (missing profile_id/account_name): {profile}"
+            )
+            continue
 
-        browser_data = client.start_browser(profile_id)
+        if current_account_name not in acc_map:
+            logger.error(
+                f"Profile account '{current_account_name}' not found in accounts.json - skipping. "
+                "Keep adspower_config.json account_name in sync with accounts.json."
+            )
+            continue
+
+        logger.info(f"Getting token for {current_account_name} ({current_profile_id})")
+
+        browser_data = client.start_browser(current_profile_id)
         if not browser_data:
-            logger.error(f"Failed to start {profile_id}")
+            logger.error(f"Failed to start {current_profile_id}")
             continue
 
         ws_url = browser_data['ws']['selenium']
 
         # Get Chrome version from browser_data
-        chrome_version = browser_data.get('version', '140.0.7339.81')  # Default to version seen in error
+        chrome_version = browser_data.get('version', '140.0.7339.81')
         logger.info(f"Chrome version: {chrome_version}")
 
         token = extract_bearer_token(ws_url, chrome_version)
 
-        client.stop_browser(profile_id)
+        client.stop_browser(current_profile_id)
 
         if token:
-            # Update accounts.json
-            acc_map[account_name]["token"] = token
-            logger.info(f"✅ Updated {account_name}")
+            acc_map[current_account_name]["token"] = token
+            logger.info(f"Updated token for {current_account_name}")
+            updated_count += 1
         else:
-            logger.error(f"❌ No token for {account_name}")
+            logger.error(f"No token for {current_account_name}")
 
     # Save
     Path("accounts.json").write_text(json.dumps(accounts, indent=2))
-    logger.info("✅ accounts.json updated")
+    logger.info(f"accounts.json updated ({updated_count} token(s) refreshed)")
+    return updated_count > 0
+
 
 if __name__ == "__main__":
     main()

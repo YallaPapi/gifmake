@@ -6,6 +6,7 @@ Handles video to GIF conversion using FFmpeg
 import subprocess
 import sys
 import os
+import re
 from typing import List, Optional, Callable, Dict, Any
 
 
@@ -38,6 +39,55 @@ def get_ffprobe_path() -> str:
     return "ffprobe"  # Fall back to PATH
 
 
+def _normalized_video_stem(video_path: str) -> str:
+    """
+    Build a clean base name for outputs.
+    Collapses double-extension sources like IMG_9805.MOV.mp4 -> IMG_9805.
+    """
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    second_stem, second_ext = os.path.splitext(stem)
+    if second_ext.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+        return second_stem
+    return stem
+
+
+def _parse_ffmpeg_duration(raw_text: str) -> Optional[float]:
+    """Parse duration from ffmpeg stderr text (e.g. 'Duration: 00:01:23.45')."""
+    if not raw_text:
+        return None
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw_text)
+    if not match:
+        return None
+    hours = int(match.group(1))
+    minutes = int(match.group(2))
+    seconds = float(match.group(3))
+    return (hours * 3600) + (minutes * 60) + seconds
+
+
+def _get_video_duration_via_ffmpeg(video_path: str) -> Optional[float]:
+    """
+    Fallback duration probe via ffmpeg output parsing.
+    Useful when ffprobe is missing but ffmpeg exists.
+    """
+    try:
+        cmd = [get_ffmpeg_path(), "-hide_banner", "-i", video_path]
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            creationflags=creationflags
+        )
+        duration = _parse_ffmpeg_duration(result.stderr or "")
+        if duration is None:
+            duration = _parse_ffmpeg_duration(result.stdout or "")
+        return duration
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+
+
 def get_video_duration(video_path: str) -> float:
     """
     Get the duration of a video file in seconds.
@@ -51,17 +101,16 @@ def get_video_duration(video_path: str) -> float:
     Raises:
         RuntimeError: If ffprobe fails or duration cannot be determined
     """
-    try:
-        # Build ffprobe command
-        cmd = [
-            get_ffprobe_path(),
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            video_path
-        ]
+    # Build ffprobe command first (preferred/accurate path).
+    cmd = [
+        get_ffprobe_path(),
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        video_path
+    ]
 
-        # Run ffprobe
+    try:
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         result = subprocess.run(
             cmd,
@@ -70,15 +119,23 @@ def get_video_duration(video_path: str) -> float:
             creationflags=creationflags
         )
 
-        if result.returncode != 0:
-            raise RuntimeError(f"ffprobe error: {result.stderr}")
+        if result.returncode == 0:
+            try:
+                return float(result.stdout.strip())
+            except ValueError as e:
+                raise RuntimeError(f"Could not parse video duration: {e}")
 
-        duration = float(result.stdout.strip())
-        return duration
+        # ffprobe exists but failed; try ffmpeg fallback before failing hard.
+        fallback_duration = _get_video_duration_via_ffmpeg(video_path)
+        if fallback_duration is not None:
+            return fallback_duration
 
-    except ValueError as e:
-        raise RuntimeError(f"Could not parse video duration: {e}")
+        raise RuntimeError(f"ffprobe error: {result.stderr}")
     except FileNotFoundError:
+        # ffprobe missing - fallback to ffmpeg parsing.
+        fallback_duration = _get_video_duration_via_ffmpeg(video_path)
+        if fallback_duration is not None:
+            return fallback_duration
         raise RuntimeError("FFmpeg/ffprobe not found. Please install FFmpeg and add it to PATH.")
 
 
@@ -128,11 +185,12 @@ def generate_gifs(
         num_gifs = 1  # At least one GIF if video is shorter than gif_duration
 
     # Get base filename for output
-    video_filename = os.path.splitext(os.path.basename(video_path))[0]
+    video_filename = _normalized_video_stem(video_path)
 
     # Build scale filter
     if resolution:
-        scale_filter = f"scale=-1:{resolution}:flags=lanczos"
+        # Use even width to keep H.264 encoders happy.
+        scale_filter = f"scale=-2:{resolution}:flags=lanczos"
     else:
         scale_filter = "scale=trunc(iw/2)*2:trunc(ih/2)*2"  # Ensure even dimensions
 
@@ -402,7 +460,7 @@ def generate_gifs_bulk(
                 raise FileNotFoundError(f"Video file not found: {video_path}")
 
             # Create subfolder for this video's GIFs
-            video_name_no_ext = os.path.splitext(video_filename)[0]
+            video_name_no_ext = _normalized_video_stem(video_path)
             video_output_folder = os.path.join(output_folder, video_name_no_ext)
             os.makedirs(video_output_folder, exist_ok=True)
 

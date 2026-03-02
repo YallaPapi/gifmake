@@ -37,26 +37,32 @@ class Account:
         Accepts formats:
         - http://IP:PORT:USERNAME:PASSWORD
         - https://IP:PORT:USERNAME:PASSWORD
+        - socks5://IP:PORT:USERNAME:PASSWORD
+        - socks5h://IP:PORT:USERNAME:PASSWORD
+        - socks4://IP:PORT:USERNAME:PASSWORD
         - IP:PORT:USERNAME:PASSWORD
 
-        Returns aiohttp format: http://username:password@ip:port
+        Returns aiohttp format: scheme://username:password@ip:port
         """
         if not self.proxy:
             return None
 
         try:
             proxy_str = self.proxy.strip()
+            scheme = "http"
 
-            # Strip http:// or https:// prefix if present
-            if proxy_str.startswith("https://"):
-                proxy_str = proxy_str[8:]
-            elif proxy_str.startswith("http://"):
-                proxy_str = proxy_str[7:]
+            # Strip known scheme prefix if present and remember it.
+            known_schemes = ("http://", "https://", "socks5://", "socks5h://", "socks4://")
+            for prefix in known_schemes:
+                if proxy_str.startswith(prefix):
+                    scheme = prefix[:-3]
+                    proxy_str = proxy_str[len(prefix):]
+                    break
 
             parts = proxy_str.split(':')
             if len(parts) == 4:
                 ip, port, user, password = parts
-                return f"http://{quote(user)}:{quote(password)}@{ip}:{port}"
+                return f"{scheme}://{quote(user)}:{quote(password)}@{ip}:{port}"
         except Exception:
             pass
 

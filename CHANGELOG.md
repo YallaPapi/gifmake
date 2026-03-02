@@ -2,6 +2,23 @@
 
 All notable changes to the GifMake project are documented in this file.
 
+## [Unreleased]
+
+### RedGIFs Upload Reliability
+- Added browser-driven RedGIFs uploader for AdsPower profile runs.
+- GUI upload worker now routes profile-selected uploads through browser automation path.
+- Hardened publish success detection:
+  - capture `/v2/gifs/submit` response in browser mode,
+  - require submit-id/watch-url proof before returning success,
+  - fail fast on submit HTTP errors with response context.
+- Improved metadata automation stability for RedGIFs Studio:
+  - stricter card targeting for Tags/Content Type,
+  - minimum-tag enforcement and recovery pass,
+  - content-type re-assertion before publish.
+- Added troubleshooting note:
+  - API mode may still depend on RedGIFs processing acceptance for specific binaries,
+  - browser mode is now the preferred path when an AdsPower profile is selected.
+
 ## [v0.4.0-beta] - 2026-02-19
 
 Major warmup system overhaul: GUI redesign, proxy tunnel fixes, poetry warmup mode, daily cap tracking.

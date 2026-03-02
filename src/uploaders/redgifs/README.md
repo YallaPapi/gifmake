@@ -14,6 +14,25 @@ Async video uploader for RedGifs with concurrent processing and rate limit handl
 - Upload results export to TXT
 - Cleanup utility for uploaded videos
 
+## Upload Modes
+
+The project now supports two posting paths:
+
+- **API mode** (default if no AdsPower profile is selected)
+  - Uses RedGIFs API endpoints directly (`/v2/upload`, `/v2/gifs/submit`, publish flow).
+- **Browser mode** (used when GUI provides an AdsPower profile id)
+  - Uses Playwright over AdsPower CDP and automates `https://studio.redgifs.com/upload`.
+  - Fills required metadata (content type, tags, description), then publishes from Studio UI.
+
+## Browser Mode Success Rules
+
+Browser mode no longer treats generic page text as publish success. A run is only marked successful when one of these hard signals is observed:
+
+- successful submit response with gif id, or
+- a real RedGIFs watch URL/link (`https://www.redgifs.com/watch/...`).
+
+If submit returns HTTP >= 400, upload fails with the submit response surfaced in logs/errors.
+
 ## Requirements
 
 - Python 3.10+
